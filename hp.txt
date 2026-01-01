@@ -1,0 +1,520 @@
+-- LocalScript: AimAssistUIManager.lua (放在StarterPlayerScripts)
+local Players = game:GetService("Players")
+local PlayerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+-- 加载自动瞄准模块
+local AimAssist
+local success, err = pcall(function()
+    AimAssist = require(game.ReplicatedStorage:WaitForChild("AimAssist"))
+end)
+
+if not success then
+    warn("无法加载AimAssist模块:", err)
+    return
+end
+
+-- 创建屏幕GUI
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AimAssistUI"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+-- 主框架
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 350, 0, 400)
+mainFrame.Position = UDim2.new(0.5, -175, 0.5, -200)
+mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+mainFrame.BackgroundTransparency = 0.2
+mainFrame.BorderSizePixel = 0
+mainFrame.ClipsDescendants = true
+
+-- 圆角
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(0, 12)
+uiCorner.Parent = mainFrame
+
+-- 阴影
+local uiShadow = Instance.new("UIStroke")
+uiShadow.Color = Color3.fromRGB(60, 60, 80)
+uiShadow.Thickness = 2
+uiShadow.Parent = mainFrame
+
+-- 标题栏
+local titleBar = Instance.new("Frame")
+titleBar.Name = "TitleBar"
+titleBar.Size = UDim2.new(1, 0, 0, 40)
+titleBar.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+titleBar.BorderSizePixel = 0
+
+local titleCorner = Instance.new("UICorner")
+titleCorner.CornerRadius = UDim.new(0, 12, 0, 0)
+titleCorner.Parent = titleBar
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Name = "Title"
+titleLabel.Size = UDim2.new(1, -40, 1, 0)
+titleLabel.Position = UDim2.new(0, 10, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "🔫 自动瞄准设置"
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.TextSize = 20
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Font = Enum.Font.GothamBold
+
+-- 关闭按钮
+local closeButton = Instance.new("TextButton")
+closeButton.Name = "CloseButton"
+closeButton.Size = UDim2.new(0, 30, 0, 30)
+closeButton.Position = UDim2.new(1, -35, 0, 5)
+closeButton.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+closeButton.Text = "×"
+closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeButton.TextSize = 24
+closeButton.Font = Enum.Font.GothamBold
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 8)
+closeCorner.Parent = closeButton
+
+-- 拖拽功能
+local dragging = false
+local dragInput, dragStart, startPos
+
+local function updateDrag(input)
+    local delta = input.Position - dragStart
+    mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+end
+
+titleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = mainFrame.Position
+        
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+titleBar.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement and dragging then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        updateDrag(input)
+    end
+end)
+
+-- 内容区域
+local contentFrame = Instance.new("Frame")
+contentFrame.Name = "Content"
+contentFrame.Size = UDim2.new(1, -20, 1, -60)
+contentFrame.Position = UDim2.new(0, 10, 0, 50)
+contentFrame.BackgroundTransparency = 1
+
+-- 创建滚动框
+local scrollingFrame = Instance.new("ScrollingFrame")
+scrollingFrame.Name = "ScrollFrame"
+scrollingFrame.Size = UDim2.new(1, 0, 1, 0)
+scrollingFrame.BackgroundTransparency = 1
+scrollingFrame.ScrollBarThickness = 6
+scrollingFrame.ScrollBarImageColor3 = Color3.fromRGB(100, 100, 120)
+scrollingFrame.CanvasSize = UDim2.new(0, 0, 0, 600)
+
+local uiListLayout = Instance.new("UIListLayout")
+uiListLayout.Padding = UDim.new(0, 15)
+uiListLayout.Parent = scrollingFrame
+
+-- 状态指示器
+local statusContainer = Instance.new("Frame")
+statusContainer.Name = "StatusContainer"
+statusContainer.Size = UDim2.new(1, 0, 0, 80)
+statusContainer.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+statusContainer.BackgroundTransparency = 0.3
+
+local statusCorner = Instance.new("UICorner")
+statusCorner.CornerRadius = UDim.new(0, 8)
+statusCorner.Parent = statusContainer
+
+-- 状态标题
+local statusTitle = Instance.new("TextLabel")
+statusTitle.Name = "StatusTitle"
+statusTitle.Size = UDim2.new(1, -20, 0, 30)
+statusTitle.Position = UDim2.new(0, 10, 0, 10)
+statusTitle.BackgroundTransparency = 1
+statusTitle.Text = "系统状态"
+statusTitle.TextColor3 = Color3.fromRGB(200, 200, 220)
+statusTitle.TextSize = 18
+statusTitle.TextXAlignment = Enum.TextXAlignment.Left
+statusTitle.Font = Enum.Font.GothamSemibold
+
+-- 状态指示器
+local statusIndicator = Instance.new("Frame")
+statusIndicator.Name = "Indicator"
+statusIndicator.Size = UDim2.new(0, 20, 0, 20)
+statusIndicator.Position = UDim2.new(1, -30, 0, 15)
+statusIndicator.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+
+local indicatorCorner = Instance.new("UICorner")
+indicatorCorner.CornerRadius = UDim.new(0.5, 0)
+indicatorCorner.Parent = statusIndicator
+
+local statusText = Instance.new("TextLabel")
+statusText.Name = "StatusText"
+statusText.Size = UDim2.new(1, -40, 0, 30)
+statusText.Position = UDim2.new(0, 10, 0, 40)
+statusText.BackgroundTransparency = 1
+statusText.Text = "已禁用"
+statusText.TextColor3 = Color3.fromRGB(255, 120, 120)
+statusText.TextSize = 16
+statusText.TextXAlignment = Enum.TextXAlignment.Left
+statusText.Font = Enum.Font.GothamMedium
+
+-- 目标信息
+local targetInfo = Instance.new("TextLabel")
+targetInfo.Name = "TargetInfo"
+targetInfo.Size = UDim2.new(1, -20, 0, 50)
+targetInfo.Position = UDim2.new(0, 10, 0, 80)
+targetInfo.BackgroundTransparency = 1
+targetInfo.Text = "当前目标: 无"
+targetInfo.TextColor3 = Color3.fromRGB(200, 200, 220)
+targetInfo.TextSize = 16
+targetInfo.TextXAlignment = Enum.TextXAlignment.Left
+targetInfo.TextYAlignment = Enum.TextYAlignment.Top
+targetInfo.Font = Enum.Font.GothamMedium
+
+-- 主开关按钮
+local toggleButton = Instance.new("TextButton")
+toggleButton.Name = "ToggleButton"
+toggleButton.Size = UDim2.new(1, 0, 0, 50)
+toggleButton.BackgroundColor3 = Color3.fromRGB(60, 120, 220)
+toggleButton.Text = "启用自动瞄准"
+toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleButton.TextSize = 18
+toggleButton.Font = Enum.Font.GothamBold
+
+local toggleCorner = Instance.new("UICorner")
+toggleCorner.CornerRadius = UDim.new(0, 8)
+toggleCorner.Parent = toggleButton
+
+-- 创建滑块控件函数
+local function createSlider(name, minValue, maxValue, defaultValue, callback)
+    local container = Instance.new("Frame")
+    container.Name = name .. "Container"
+    container.Size = UDim2.new(1, 0, 0, 70)
+    container.BackgroundTransparency = 1
+    
+    local label = Instance.new("TextLabel")
+    label.Name = name .. "Label"
+    label.Size = UDim2.new(1, 0, 0, 25)
+    label.BackgroundTransparency = 1
+    label.Text = name
+    label.TextColor3 = Color3.fromRGB(220, 220, 240)
+    label.TextSize = 16
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Font = Enum.Font.GothamSemibold
+    
+    local valueLabel = Instance.new("TextLabel")
+    valueLabel.Name = name .. "Value"
+    valueLabel.Size = UDim2.new(0, 60, 0, 25)
+    valueLabel.Position = UDim2.new(1, -60, 0, 0)
+    valueLabel.BackgroundTransparency = 1
+    valueLabel.Text = tostring(defaultValue)
+    valueLabel.TextColor3 = Color3.fromRGB(180, 220, 255)
+    valueLabel.TextSize = 16
+    valueLabel.TextXAlignment = Enum.TextXAlignment.Right
+    valueLabel.Font = Enum.Font.GothamMedium
+    
+    local sliderFrame = Instance.new("Frame")
+    sliderFrame.Name = name .. "SliderFrame"
+    sliderFrame.Size = UDim2.new(1, 0, 0, 25)
+    sliderFrame.Position = UDim2.new(0, 0, 0, 30)
+    sliderFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+    
+    local sliderCorner = Instance.new("UICorner")
+    sliderCorner.CornerRadius = UDim.new(0, 4)
+    sliderCorner.Parent = sliderFrame
+    
+    local fill = Instance.new("Frame")
+    fill.Name = name .. "Fill"
+    fill.Size = UDim2.new((defaultValue - minValue) / (maxValue - minValue), 0, 1, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(80, 160, 255)
+    
+    local fillCorner = Instance.new("UICorner")
+    fillCorner.CornerRadius = UDim.new(0, 4)
+    fillCorner.Parent = fill
+    
+    local sliderButton = Instance.new("TextButton")
+    sliderButton.Name = name .. "Button"
+    sliderButton.Size = UDim2.new(1, 0, 1, 0)
+    sliderButton.BackgroundTransparency = 1
+    sliderButton.Text = ""
+    
+    -- 滑块交互
+    local draggingSlider = false
+    
+    local function updateSliderValue(input)
+        local relativeX = (input.Position.X - sliderFrame.AbsolutePosition.X) / sliderFrame.AbsoluteSize.X
+        relativeX = math.clamp(relativeX, 0, 1)
+        local value = minValue + (maxValue - minValue) * relativeX
+        
+        -- 根据类型取整
+        if name == "平滑度" then
+            value = math.floor(value * 100 + 0.5) / 100
+        else
+            value = math.floor(value + 0.5)
+        end
+        
+        fill.Size = UDim2.new(relativeX, 0, 1, 0)
+        valueLabel.Text = tostring(value)
+        
+        if callback then
+            callback(value)
+        end
+    end
+    
+    sliderButton.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            draggingSlider = true
+            updateSliderValue(input)
+        end
+    end)
+    
+    sliderButton.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            draggingSlider = false
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if draggingSlider and input.UserInputType == Enum.UserInputType.MouseMovement then
+            updateSliderValue(input)
+        end
+    end)
+    
+    -- 组装
+    fill.Parent = sliderFrame
+    sliderButton.Parent = sliderFrame
+    label.Parent = container
+    valueLabel.Parent = container
+    sliderFrame.Parent = container
+    
+    return container
+end
+
+-- 创建设置控件
+local rangeSlider = createSlider("锁定范围", 10, 200, 50, function(value)
+    AimAssist:SetLockRange(value)
+end)
+
+local smoothSlider = createSlider("平滑度", 0.05, 0.5, 0.2, function(value)
+    AimAssist:SetSmoothness(value)
+end)
+
+local distanceSlider = createSlider("最大距离", 50, 1000, 500, function(value)
+    AimAssist:SetMaxDistance(value)
+end)
+
+-- 复选框函数
+local function createCheckbox(name, defaultValue, callback)
+    local container = Instance.new("Frame")
+    container.Name = name .. "CheckContainer"
+    container.Size = UDim2.new(1, 0, 0, 40)
+    container.BackgroundTransparency = 1
+    
+    local label = Instance.new("TextLabel")
+    label.Name = name .. "Label"
+    label.Size = UDim2.new(1, -50, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = name
+    label.TextColor3 = Color3.fromRGB(220, 220, 240)
+    label.TextSize = 16
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Font = Enum.Font.GothamMedium
+    
+    local checkbox = Instance.new("TextButton")
+    checkbox.Name = name .. "Checkbox"
+    checkbox.Size = UDim2.new(0, 30, 0, 30)
+    checkbox.Position = UDim2.new(1, -35, 0, 5)
+    checkbox.BackgroundColor3 = defaultValue and Color3.fromRGB(80, 160, 255) or Color3.fromRGB(80, 80, 100)
+    checkbox.Text = defaultValue and "✓" or ""
+    checkbox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    checkbox.TextSize = 20
+    
+    local checkCorner = Instance.new("UICorner")
+    checkCorner.CornerRadius = UDim.new(0, 6)
+    checkCorner.Parent = checkbox
+    
+    checkbox.MouseButton1Click:Connect(function()
+        local newValue = not (checkbox.Text == "✓")
+        checkbox.Text = newValue and "✓" or ""
+        checkbox.BackgroundColor3 = newValue and Color3.fromRGB(80, 160, 255) or Color3.fromRGB(80, 80, 100)
+        
+        if callback then
+            callback(newValue)
+        end
+    end)
+    
+    label.Parent = container
+    checkbox.Parent = container
+    
+    return container
+end
+
+-- 创建复选框
+local teamCheck = createCheckbox("队伍检查", true, function(value)
+    AimAssist:SetTeamCheck(value)
+end)
+
+local predictionCheck = createCheckbox("移动预测", false, function(value)
+    AimAssist:SetPrediction(value)
+end)
+
+-- 热键设置
+local hotkeyFrame = Instance.new("Frame")
+hotkeyFrame.Name = "HotkeyFrame"
+hotkeyFrame.Size = UDim2.new(1, 0, 0, 60)
+hotkeyFrame.BackgroundTransparency = 1
+
+local hotkeyLabel = Instance.new("TextLabel")
+hotkeyLabel.Name = "HotkeyLabel"
+hotkeyLabel.Size = UDim2.new(0.5, 0, 0, 30)
+hotkeyLabel.BackgroundTransparency = 1
+hotkeyLabel.Text = "切换热键:"
+hotkeyLabel.TextColor3 = Color3.fromRGB(220, 220, 240)
+hotkeyLabel.TextSize = 16
+hotkeyLabel.TextXAlignment = Enum.TextXAlignment.Left
+hotkeyLabel.Font = Enum.Font.GothamMedium
+
+local hotkeyButton = Instance.new("TextButton")
+hotkeyButton.Name = "HotkeyButton"
+hotkeyButton.Size = UDim2.new(0, 100, 0, 30)
+hotkeyButton.Position = UDim2.new(0.5, 0, 0, 0)
+hotkeyButton.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+hotkeyButton.Text = "Q"
+hotkeyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+hotkeyButton.TextSize = 16
+
+local hotkeyCorner = Instance.new("UICorner")
+hotkeyCorner.CornerRadius = UDim.new(0, 6)
+hotkeyCorner.Parent = hotkeyButton
+
+local listening = false
+hotkeyButton.MouseButton1Click:Connect(function()
+    if not listening then
+        listening = true
+        hotkeyButton.Text = "[按任意键]"
+        hotkeyButton.BackgroundColor3 = Color3.fromRGB(255, 180, 80)
+        
+        local connection
+        connection = UserInputService.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Keyboard then
+                hotkeyButton.Text = input.KeyCode.Name
+                AimAssist:SetHotkey(input.KeyCode)
+                listening = false
+                hotkeyButton.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+                connection:Disconnect()
+            end
+        end)
+    end
+end)
+
+hotkeyLabel.Parent = hotkeyFrame
+hotkeyButton.Parent = hotkeyFrame
+
+-- 组装UI
+statusContainer.Parent = scrollingFrame
+statusTitle.Parent = statusContainer
+statusIndicator.Parent = statusContainer
+statusText.Parent = statusContainer
+targetInfo.Parent = statusContainer
+
+toggleButton.Parent = scrollingFrame
+rangeSlider.Parent = scrollingFrame
+smoothSlider.Parent = scrollingFrame
+distanceSlider.Parent = scrollingFrame
+teamCheck.Parent = scrollingFrame
+predictionCheck.Parent = scrollingFrame
+hotkeyFrame.Parent = scrollingFrame
+
+scrollingFrame.Parent = contentFrame
+contentFrame.Parent = mainFrame
+titleLabel.Parent = titleBar
+closeButton.Parent = titleBar
+titleBar.Parent = mainFrame
+mainFrame.Parent = screenGui
+screenGui.Parent = PlayerGui
+
+-- 默认隐藏UI
+mainFrame.Visible = false
+
+-- 创建显示/隐藏UI的按钮
+local toggleUIButton = Instance.new("TextButton")
+toggleUIButton.Name = "ToggleUIButton"
+toggleUIButton.Size = UDim2.new(0, 50, 0, 50)
+toggleUIButton.Position = UDim2.new(1, -60, 1, -60)
+toggleUIButton.AnchorPoint = Vector2.new(1, 1)
+toggleUIButton.BackgroundColor3 = Color3.fromRGB(60, 120, 220)
+toggleUIButton.Text = "⚙️"
+toggleUIButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleUIButton.TextSize = 24
+
+local toggleUICorner = Instance.new("UICorner")
+toggleUICorner.CornerRadius = UDim.new(0, 12)
+toggleUICorner.Parent = toggleUIButton
+
+toggleUIButton.Parent = screenGui
+
+-- 更新UI状态的函数
+local function updateUI()
+    local enabled = AimAssist:IsEnabled()
+    
+    -- 更新状态指示器
+    statusIndicator.BackgroundColor3 = enabled and Color3.fromRGB(80, 220, 120) or Color3.fromRGB(255, 80, 80)
+    statusText.Text = enabled and "已启用" .. (AimAssist:GetCurrentTarget() and " (锁定中)" or " (搜索中)") or "已禁用"
+    statusText.TextColor3 = enabled and Color3.fromRGB(180, 255, 180) or Color3.fromRGB(255, 120, 120)
+    toggleButton.Text = enabled and "禁用自动瞄准" or "启用自动瞄准"
+    toggleButton.BackgroundColor3 = enabled and Color3.fromRGB(220, 80, 80) or Color3.fromRGB(60, 120, 220)
+    
+    -- 更新目标信息
+    local target = AimAssist:GetCurrentTarget()
+    if target then
+        targetInfo.Text = "当前目标: " .. target.Name .. "\n距离: " .. tostring(math.floor(AimAssist:GetTargetDistance() or 0)) .. " 单位"
+        targetInfo.TextColor3 = Color3.fromRGB(180, 255, 180)
+    else
+        targetInfo.Text = "当前目标: 无\n" .. (enabled and "正在搜索目标..." or "系统已禁用")
+        targetInfo.TextColor3 = Color3.fromRGB(200, 200, 220)
+    end
+end
+
+-- 按钮事件
+toggleButton.MouseButton1Click:Connect(function()
+    AimAssist:Toggle()
+    updateUI()
+end)
+
+closeButton.MouseButton1Click:Connect(function()
+    mainFrame.Visible = false
+end)
+
+toggleUIButton.MouseButton1Click:Connect(function()
+    mainFrame.Visible = not mainFrame.Visible
+end)
+
+-- 更新循环
+RunService.RenderStepped:Connect(updateUI)
+
+-- 初始化UI
+updateUI()
+
+print("自动瞄准UI已加载。按 Q 切换瞄准，点击右下角齿轮打开设置。")
