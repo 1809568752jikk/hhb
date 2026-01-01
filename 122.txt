@@ -1,0 +1,474 @@
+-- LocalScript: CameraLock.local.lua
+-- 放在 StarterPlayer -> StarterPlayerScripts（或 StarterGui）中
+-- 功能：锁定目标玩家视角，UI 可调节距离、预测、墙体检测，可关闭 UI
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- 配置默认值
+local DEFAULT_DISTANCE = 16
+local MIN_DISTANCE = 4
+local MAX_DISTANCE = 60
+
+local DEFAULT_PREDICT = 0.6 -- 预测乘数
+local MIN_PREDICT = 0
+local MAX_PREDICT = 3
+
+local CAMERA_HEIGHT = 1.6 -- 相对目标的高度偏移（头顶/胸部）
+local SMOOTHNESS = 12 -- 相机跟随平滑系数
+
+-- 创建 UI
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "CameraLockGUI"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = PlayerGui
+
+-- 主面板
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "Main"
+mainFrame.Size = UDim2.new(0, 320, 0, 220)
+mainFrame.Position = UDim2.new(0.02, 0, 0.1, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+
+local uiCorner = Instance.new("UICorner", mainFrame)
+uiCorner.CornerRadius = UDim.new(0, 8)
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -16, 0, 28)
+title.Position = UDim2.new(0, 8, 0, 8)
+title.BackgroundTransparency = 1
+title.Text = "视角锁定 Camera Lock"
+title.TextColor3 = Color3.fromRGB(230,230,230)
+title.TextScaled = false
+title.Font = Enum.Font.SourceSansBold
+title.TextSize = 18
+title.Parent = mainFrame
+
+-- 玩家列表滚动区域
+local playerListLabel = Instance.new("TextLabel", mainFrame)
+playerListLabel.Size = UDim2.new(1, -16, 0, 20)
+playerListLabel.Position = UDim2.new(0, 8, 0, 42)
+playerListLabel.BackgroundTransparency = 1
+playerListLabel.Text = "玩家列表（点名选择目标）"
+playerListLabel.TextColor3 = Color3.fromRGB(200,200,200)
+playerListLabel.Font = Enum.Font.SourceSans
+playerListLabel.TextSize = 14
+playerListLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local listFrame = Instance.new("Frame", mainFrame)
+listFrame.Size = UDim2.new(1, -16, 0, 80)
+listFrame.Position = UDim2.new(0, 8, 0, 64)
+listFrame.BackgroundColor3 = Color3.fromRGB(24,24,24)
+listFrame.BorderSizePixel = 0
+
+local listCorner = Instance.new("UICorner", listFrame)
+listCorner.CornerRadius = UDim.new(0,6)
+
+local uiList = Instance.new("ScrollingFrame", listFrame)
+uiList.Size = UDim2.new(1, 0, 1, 0)
+uiList.BackgroundTransparency = 1
+uiList.ScrollBarThickness = 6
+uiList.CanvasSize = UDim2.new(0, 0, 0, 0)
+uiList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+uiList.Name = "PlayersList"
+
+local uiListLayout = Instance.new("UIListLayout", uiList)
+uiListLayout.Padding = UDim.new(0,4)
+uiListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+-- 状态和控制按钮
+local controlsFrame = Instance.new("Frame", mainFrame)
+controlsFrame.Size = UDim2.new(1, -16, 0, 56)
+controlsFrame.Position = UDim2.new(0, 8, 0, 152)
+controlsFrame.BackgroundTransparency = 1
+
+local lockToggle = Instance.new("TextButton", controlsFrame)
+lockToggle.Size = UDim2.new(0, 100, 0, 32)
+lockToggle.Position = UDim2.new(0, 0, 0, 0)
+lockToggle.Text = "Lock: OFF"
+lockToggle.Font = Enum.Font.SourceSansBold
+lockToggle.TextSize = 16
+lockToggle.TextColor3 = Color3.fromRGB(240,240,240)
+lockToggle.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+lockToggle.Name = "LockToggle"
+local lockCorner = Instance.new("UICorner", lockToggle); lockCorner.CornerRadius = UDim.new(0,6)
+
+local closeBtn = Instance.new("TextButton", controlsFrame)
+closeBtn.Size = UDim2.new(0, 80, 0, 24)
+closeBtn.Position = UDim2.new(1, -80, 0, 0)
+closeBtn.Text = "Close UI"
+closeBtn.Font = Enum.Font.SourceSans
+closeBtn.TextSize = 14
+closeBtn.BackgroundColor3 = Color3.fromRGB(70,70,70)
+closeBtn.TextColor3 = Color3.fromRGB(240,240,240)
+local closeCorner = Instance.new("UICorner", closeBtn); closeCorner.CornerRadius = UDim.new(0,6)
+
+-- 右下角最小化按钮（显示/隐藏 UI）
+local toggleUIBtn = Instance.new("TextButton")
+toggleUIBtn.Name = "ToggleUI"
+toggleUIBtn.Size = UDim2.new(0, 36, 0, 36)
+toggleUIBtn.Position = UDim2.new(1, -44, 1, -44)
+toggleUIBtn.AnchorPoint = Vector2.new(0,0)
+toggleUIBtn.BackgroundColor3 = Color3.fromRGB(50,50,50)
+toggleUIBtn.Text = "UI"
+toggleUIBtn.Parent = screenGui
+local toggleCorner = Instance.new("UICorner", toggleUIBtn); toggleCorner.CornerRadius = UDim.new(0,8)
+
+-- 滑块与数值：距离
+local distanceLabel = Instance.new("TextLabel", controlsFrame)
+distanceLabel.Size = UDim2.new(0, 120, 0, 20)
+distanceLabel.Position = UDim2.new(0, 108, 0, 0)
+distanceLabel.BackgroundTransparency = 1
+distanceLabel.Text = "距离: " .. tostring(DEFAULT_DISTANCE)
+distanceLabel.TextColor3 = Color3.fromRGB(220,220,220)
+distanceLabel.Font = Enum.Font.SourceSans
+distanceLabel.TextSize = 14
+distanceLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local sliderBar = Instance.new("Frame", controlsFrame)
+sliderBar.Size = UDim2.new(0, 200, 0, 10)
+sliderBar.Position = UDim2.new(0, 108, 0, 24)
+sliderBar.BackgroundColor3 = Color3.fromRGB(90,90,90)
+local sliderCorner = Instance.new("UICorner", sliderBar); sliderCorner.CornerRadius = UDim.new(0,6)
+
+local sliderHandle = Instance.new("Frame", sliderBar)
+sliderHandle.Size = UDim2.new((DEFAULT_DISTANCE - MIN_DISTANCE)/(MAX_DISTANCE - MIN_DISTANCE), 0, 1, 0)
+sliderHandle.BackgroundColor3 = Color3.fromRGB(150,200,255)
+local handleCorner = Instance.new("UICorner", sliderHandle); handleCorner.CornerRadius = UDim.new(0,6)
+
+-- 预测滑块
+local predictLabel = Instance.new("TextLabel", controlsFrame)
+predictLabel.Size = UDim2.new(0, 120, 0, 20)
+predictLabel.Position = UDim2.new(0, 108, 0, 40)
+predictLabel.BackgroundTransparency = 1
+predictLabel.Text = "预测: " .. string.format("%.2f", DEFAULT_PREDICT)
+predictLabel.TextColor3 = Color3.fromRGB(220,220,220)
+predictLabel.Font = Enum.Font.SourceSans
+predictLabel.TextSize = 14
+predictLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+-- 使用同一个 sliderBar 的下方做预测滑块（简化 UI 布局）
+local predictBar = Instance.new("Frame", mainFrame)
+predictBar.Size = UDim2.new(0, 200, 0, 10)
+predictBar.Position = UDim2.new(0, 8, 1, -36)
+predictBar.BackgroundColor3 = Color3.fromRGB(90,90,90)
+predictBar.Visible = true
+local predictCorner = Instance.new("UICorner", predictBar); predictCorner.CornerRadius = UDim.new(0,6)
+
+local predictHandle = Instance.new("Frame", predictBar)
+predictHandle.Size = UDim2.new((DEFAULT_PREDICT - MIN_PREDICT)/(MAX_PREDICT - MIN_PREDICT), 0, 1, 0)
+predictHandle.BackgroundColor3 = Color3.fromRGB(255,180,120)
+local predictHandleCorner = Instance.new("UICorner", predictHandle); predictHandleCorner.CornerRadius = UDim.new(0,6)
+
+local predictText = Instance.new("TextLabel", mainFrame)
+predictText.Size = UDim2.new(0, 300, 0, 20)
+predictText.Position = UDim2.new(0, 8, 1, -56)
+predictText.BackgroundTransparency = 1
+predictText.Text = "预测强度（下滑块）"
+predictText.TextColor3 = Color3.fromRGB(200,200,200)
+predictText.Font = Enum.Font.SourceSans
+predictText.TextSize = 14
+predictText.TextXAlignment = Enum.TextXAlignment.Left
+
+-- 状态变量
+local isLocked = false
+local targetPlayer = nil
+local distance = DEFAULT_DISTANCE
+local predictFactor = DEFAULT_PREDICT
+
+-- 滑块交互函数
+local function sliderInput(sliderFrame, handle, minV, maxV, onChange)
+	local dragging = false
+
+	local function updateFromX(x)
+		local absX = math.clamp(x - sliderFrame.AbsolutePosition.X, 0, sliderFrame.AbsoluteSize.X)
+		local t = absX / sliderFrame.AbsoluteSize.X
+		handle.Size = UDim2.new(t, 0, 1, 0)
+		local value = minV + (maxV - minV) * t
+		onChange(value)
+	end
+
+	sliderFrame.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = true
+			updateFromX(input.Position.X)
+		end
+	end)
+	sliderFrame.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = false
+		end
+	end)
+	sliderFrame.InputChanged:Connect(function(input)
+		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+			updateFromX(input.Position.X)
+		end
+	end)
+	-- 支持点击滑道任意位置
+	sliderFrame.MouseButton1Click = sliderFrame.MouseButton1Click or nil
+end
+
+-- 填充玩家列表
+local function refreshPlayerList()
+	-- 清空旧按钮
+	for _, child in ipairs(uiList:GetChildren()) do
+		if child:IsA("TextButton") then child:Destroy() end
+	end
+
+	for _, pl in ipairs(Players:GetPlayers()) do
+		if pl ~= LocalPlayer then
+			local btn = Instance.new("TextButton")
+			btn.Size = UDim2.new(1, -8, 0, 26)
+			btn.BackgroundColor3 = Color3.fromRGB(48,48,48)
+			btn.TextColor3 = Color3.fromRGB(230,230,230)
+			btn.Font = Enum.Font.SourceSans
+			btn.TextSize = 14
+			btn.AutoButtonColor = true
+			btn.Text = pl.Name
+			btn.Parent = uiList
+
+			btn.MouseButton1Click:Connect(function()
+				targetPlayer = pl
+				-- 高亮按钮显示当前目标
+				for _, b in ipairs(uiList:GetChildren()) do
+					if b:IsA("TextButton") then
+						b.BackgroundColor3 = Color3.fromRGB(48,48,48)
+					end
+				end
+				btn.BackgroundColor3 = Color3.fromRGB(80,120,180)
+			end)
+		end
+	end
+end
+
+Players.PlayerAdded:Connect(function() wait(0.2); refreshPlayerList() end)
+Players.PlayerRemoving:Connect(function(pl)
+	if pl == targetPlayer then
+		targetPlayer = nil
+		isLocked = false
+		lockToggle.Text = "Lock: OFF"
+	end
+	wait(0.2); refreshPlayerList()
+end)
+
+-- 初始化列表
+refreshPlayerList()
+
+-- 锁定开关
+lockToggle.MouseButton1Click:Connect(function()
+	isLocked = not isLocked
+	lockToggle.Text = "Lock: " .. (isLocked and "ON" or "OFF")
+	-- 切换 CameraType
+	local cam = Workspace.CurrentCamera
+	if isLocked then
+		-- 如果没有目标，试着自动选最近的玩家
+		if not targetPlayer then
+			-- 选择与鼠标或摄像机最近的玩家
+			local closest, dmin = nil, math.huge
+			for _, pl in ipairs(Players:GetPlayers()) do
+				if pl ~= LocalPlayer and pl.Character and pl.Character:FindFirstChild("HumanoidRootPart") then
+					local pos = pl.Character.HumanoidRootPart.Position
+					local dist = (Workspace.CurrentCamera.CFrame.Position - pos).Magnitude
+					if dist < dmin then
+						dmin = dist; closest = pl
+					end
+				end
+			end
+			if closest then
+				targetPlayer = closest
+				refreshPlayerList()
+			end
+		end
+		cam.CameraType = Enum.CameraType.Scriptable
+	else
+		Workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
+	end
+end)
+
+-- 关闭/隐藏 UI
+closeBtn.MouseButton1Click:Connect(function()
+	mainFrame.Visible = false
+end)
+toggleUIBtn.MouseButton1Click:Connect(function()
+	mainFrame.Visible = not mainFrame.Visible
+end)
+
+-- 滑块绑定
+do
+	-- 距离滑块交互（绑定 sliderBar）
+	local dragging = false
+	local function updateDistanceFromX(x)
+		local absX = math.clamp(x - sliderBar.AbsolutePosition.X, 0, sliderBar.AbsoluteSize.X)
+		local t = absX / sliderBar.AbsoluteSize.X
+		sliderHandle.Size = UDim2.new(t, 0, 1, 0)
+		distance = math.clamp(MIN_DISTANCE + (MAX_DISTANCE - MIN_DISTANCE) * t, MIN_DISTANCE, MAX_DISTANCE)
+		distanceLabel.Text = "距离: " .. string.format("%.1f", distance)
+	end
+	sliderBar.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = true
+			updateDistanceFromX(input.Position.X)
+		end
+	end)
+	sliderBar.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = false
+		end
+	end)
+	sliderBar.InputChanged:Connect(function(input)
+		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+			updateDistanceFromX(input.Position.X)
+		end
+	end)
+
+	-- 预测滑块
+	local draggingP = false
+	local function updatePredictFromX(x)
+		local absX = math.clamp(x - predictBar.AbsolutePosition.X, 0, predictBar.AbsoluteSize.X)
+		local t = absX / predictBar.AbsoluteSize.X
+		predictHandle.Size = UDim2.new(t, 0, 1, 0)
+		predictFactor = math.clamp(MIN_PREDICT + (MAX_PREDICT - MIN_PREDICT) * t, MIN_PREDICT, MAX_PREDICT)
+		predictLabel.Text = "预测: " .. string.format("%.2f", predictFactor)
+		predictText.Text = "预测强度（下滑块）: " .. string.format("%.2f", predictFactor)
+	end
+	predictBar.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			draggingP = true
+			updatePredictFromX(input.Position.X)
+		end
+	end)
+	predictBar.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			draggingP = false
+		end
+	end)
+	predictBar.InputChanged:Connect(function(input)
+		if draggingP and input.UserInputType == Enum.UserInputType.MouseMovement then
+			updatePredictFromX(input.Position.X)
+		end
+	end)
+end
+
+-- 射线检测函数（从目标到期望相机位置）
+local function resolveCameraPosition(targetPos, desiredPos, ignoreList)
+	ignoreList = ignoreList or {}
+	local direction = desiredPos - targetPos
+	local dist = direction.Magnitude
+	if dist <= 0.001 then
+		return desiredPos
+	end
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Blacklist
+	params.FilterDescendantsInstances = ignoreList
+	params.IgnoreWater = true
+
+	local result = Workspace:Raycast(targetPos, direction.Unit * dist, params)
+	if result then
+		-- 返回碰撞点前一个小偏移，避免穿模
+		local safePos = result.Position + result.Normal * 0.5
+		return safePos, true
+	end
+	return desiredPos, false
+end
+
+-- 主循环：在 RenderStepped 上更新摄像机
+local camera = Workspace.CurrentCamera
+local lastTime = tick()
+RunService.RenderStepped:Connect(function(dt)
+	camera = Workspace.CurrentCamera
+	if isLocked and targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart") then
+		local hrp = targetPlayer.Character.HumanoidRootPart
+		local targetPos = hrp.Position + Vector3.new(0, CAMERA_HEIGHT, 0)
+
+		-- 预测：使用目标速度估算未来位置
+		local vel = Vector3.new(0,0,0)
+		if hrp:FindFirstChild("Velocity") then
+			vel = hrp.Velocity
+		else
+			vel = hrp.Velocity -- HumanoidRootPart 自带 Velocity
+		end
+		local predicted = targetPos + vel * predictFactor
+
+		-- 期望摄像机位置：沿相对于目标的方向取反向（从目标背后看）
+		-- 我们用当前摄像机与目标连线方向保持水平朝向：从目标往摄像机方向 normalized * distance
+		local camPos = camera.CFrame.Position
+		local backDir = (camPos - targetPos)
+		if backDir.Magnitude < 0.01 then
+			backDir = Vector3.new(0, 0, 1)
+		end
+		backDir = backDir.Unit
+
+		local desiredPos = predicted + backDir * distance
+
+		-- 墙体检测：从目标（或预测位置）朝 desiredPos 射线，黑名单过滤目标角色自身和玩家摄像机等
+		local ignoreList = {LocalPlayer.Character, targetPlayer.Character}
+		local resolvedPos, obstructed = resolveCameraPosition(predicted, desiredPos, ignoreList)
+
+		-- 如果被阻挡，尝试从 targetPos 往摄像机方向做第二次射线（更保守）
+		if obstructed then
+			-- resolvedPos 已经是碰撞点前的安全点
+		end
+
+		-- 让摄像机朝向目标（使用预测目标位置）
+		local lookAt = predicted
+
+		-- 平滑插值摄像机 CFrame
+		local desiredCFrame = CFrame.new(resolvedPos, lookAt)
+		camera.CFrame = camera.CFrame:Lerp(desiredCFrame, math.clamp(SMOOTHNESS * dt, 0, 1))
+
+		-- 可选：如果目标死亡或不可见，则取消锁定（防止卡住）
+		local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
+		if not humanoid or humanoid.Health <= 0 then
+			isLocked = false
+			lockToggle.Text = "Lock: OFF"
+			camera.CameraType = Enum.CameraType.Custom
+			targetPlayer = nil
+		end
+	else
+		-- 当未锁定时确保相机模式为 Custom（让玩家自由控制）
+		if camera.CameraType == Enum.CameraType.Scriptable and not isLocked then
+			camera.CameraType = Enum.CameraType.Custom
+		end
+	end
+end)
+
+-- 初始设置（设置滑块可见位置）
+do
+	-- 设置初始 handle 大小
+	local t = (DEFAULT_DISTANCE - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE)
+	sliderHandle.Size = UDim2.new(t, 0, 1, 0)
+
+	local tp = (DEFAULT_PREDICT - MIN_PREDICT) / (MAX_PREDICT - MIN_PREDICT)
+	predictHandle.Size = UDim2.new(tp, 0, 1, 0)
+end
+
+-- 额外热键（按键 'L' 切换锁定）
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then return end
+	if input.KeyCode == Enum.KeyCode.L then
+		lockToggle:CaptureFocus() -- 防止文字框捕获？
+		lockToggle.MouseButton1Click:Connect(function() end) -- noop to ensure consistent state
+		isLocked = not isLocked
+		lockToggle.Text = "Lock: " .. (isLocked and "ON" or "OFF")
+		if isLocked then
+			camera.CameraType = Enum.CameraType.Scriptable
+		else
+			camera.CameraType = Enum.CameraType.Custom
+		end
+	end
+end)
+
+-- 防止内存泄露 - 当玩家重生或移除时确保 UI 清理（通常 LocalScript 会随玩家重生重新加载）
+LocalPlayer.CharacterAdded:Connect(function()
+	-- 如果你希望在复活后仍然保持锁定，保留 targetPlayer；此处我们不自动 lock
+end)
+
+-- 完成提示（可选打印）
+print("[CameraLock] 已加载，打开 UI 选择目标并点击 Lock 开始锁定。")
