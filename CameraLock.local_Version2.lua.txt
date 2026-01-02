@@ -1,0 +1,430 @@
+-- CameraLock.local.lua
+-- LocalScript，放到 StarterPlayer > StarterPlayerScripts
+-- 功能：
+--  - 视角锁定选中的玩家（第三人称跟随并注视目标）
+--  - UI（选择目标、锁定/解锁、隐藏UI、墙壁检测开关、距离调节、状态显示）
+--  - 墙壁检测：如果本地玩家与目标之间有障碍（墙），则禁止锁定
+--  - 相机碰撞检测：如果相机与目标之间有障碍，会把相机放置靠近碰撞点
+--  - 可通过快捷键 P 切换锁定，U 隐藏/显示 UI
+-- 注意：客户端脚本，仅影响本地玩家的相机
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+-- 默认设置
+local settings = {
+    locked = false,
+    wallDetection = true,    -- 是否在锁定前检查本地玩家与目标之间是否有墙
+    maxDistance = 200,       -- 超出此距离自动解锁（stud）
+    distance = 8,            -- 与目标的距离（stud，可通过UI调整）
+    height = 2.0,            -- 相机相对目标的高度偏移（stud）
+    smoothing = 12,          -- 平滑系数
+    targetIndex = 1,
+    target = nil,
+}
+
+-- 辅助：安全获取角色的参考点（HumanoidRootPart优先，Head次之）
+local function getCharacterReference(player)
+    if not player then return nil end
+    local char = player.Character
+    if not char then return nil end
+    return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head")
+end
+
+-- 创建UI并返回控件引用
+local function createUI()
+    local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "CameraLockGui"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = playerGui
+
+    local frame = Instance.new("Frame")
+    frame.Name = "Main"
+    frame.Size = UDim2.new(0, 300, 0, 170)
+    frame.Position = UDim2.new(0, 16, 0, 64)
+    frame.BackgroundColor3 = Color3.fromRGB(30, 30, 36)
+    frame.BorderSizePixel = 0
+    frame.Parent = screenGui
+
+    local uiCorner = Instance.new("UICorner")
+    uiCorner.CornerRadius = UDim.new(0, 8)
+    uiCorner.Parent = frame
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -12, 0, 28)
+    title.Position = UDim2.new(0, 6, 0, 6)
+    title.BackgroundTransparency = 1
+    title.Text = "视角锁定"
+    title.TextColor3 = Color3.new(1,1,1)
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 18
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = frame
+
+    -- 目标切换
+    local prevBtn = Instance.new("TextButton")
+    prevBtn.Size = UDim2.new(0, 28, 0, 28)
+    prevBtn.Position = UDim2.new(0, 6, 0, 36)
+    prevBtn.Text = "<"
+    prevBtn.Font = Enum.Font.SourceSansBold
+    prevBtn.TextSize = 20
+    prevBtn.Parent = frame
+
+    local nextBtn = Instance.new("TextButton")
+    nextBtn.Size = UDim2.new(0, 28, 0, 28)
+    nextBtn.Position = UDim2.new(1, -34, 0, 36)
+    nextBtn.Text = ">"
+    nextBtn.Font = Enum.Font.SourceSansBold
+    nextBtn.TextSize = 20
+    nextBtn.Parent = frame
+
+    local targetLabel = Instance.new("TextLabel")
+    targetLabel.Size = UDim2.new(1, -72, 0, 28)
+    targetLabel.Position = UDim2.new(0, 40, 0, 36)
+    targetLabel.BackgroundTransparency = 1
+    targetLabel.Text = "目标：无"
+    targetLabel.TextColor3 = Color3.new(1,1,1)
+    targetLabel.Font = Enum.Font.SourceSans
+    targetLabel.TextSize = 16
+    targetLabel.TextXAlignment = Enum.TextXAlignment.Left
+    targetLabel.Parent = frame
+
+    -- 锁定按钮
+    local lockBtn = Instance.new("TextButton")
+    lockBtn.Size = UDim2.new(1, -12, 0, 36)
+    lockBtn.Position = UDim2.new(0, 6, 0, 72)
+    lockBtn.Text = "锁定"
+    lockBtn.Font = Enum.Font.SourceSansBold
+    lockBtn.TextSize = 18
+    lockBtn.BackgroundColor3 = Color3.fromRGB(50,120,210)
+    lockBtn.TextColor3 = Color3.new(1,1,1)
+    lockBtn.Parent = frame
+
+    -- 隐藏UI按钮
+    local hideBtn = Instance.new("TextButton")
+    hideBtn.Size = UDim2.new(0, 60, 0, 22)
+    hideBtn.Position = UDim2.new(1, -68, 0, 8)
+    hideBtn.Text = "隐藏 (U)"
+    hideBtn.Font = Enum.Font.SourceSans
+    hideBtn.TextSize = 12
+    hideBtn.BackgroundColor3 = Color3.fromRGB(80,80,80)
+    hideBtn.TextColor3 = Color3.new(1,1,1)
+    hideBtn.Parent = frame
+
+    -- 墙壁检测开关
+    local wallToggle = Instance.new("TextButton")
+    wallToggle.Size = UDim2.new(0, 140, 0, 24)
+    wallToggle.Position = UDim2.new(0, 6, 0, 116)
+    wallToggle.Text = "墙壁检测: 开"
+    wallToggle.Font = Enum.Font.SourceSans
+    wallToggle.TextSize = 14
+    wallToggle.BackgroundColor3 = Color3.fromRGB(70,70,70)
+    wallToggle.TextColor3 = Color3.new(1,1,1)
+    wallToggle.Parent = frame
+
+    -- 距离调节（TextBox）
+    local distLabel = Instance.new("TextLabel")
+    distLabel.Size = UDim2.new(0, 44, 0, 24)
+    distLabel.Position = UDim2.new(0, 154, 0, 116)
+    distLabel.BackgroundTransparency = 1
+    distLabel.Text = "距离:"
+    distLabel.TextColor3 = Color3.new(1,1,1)
+    distLabel.Font = Enum.Font.SourceSans
+    distLabel.TextSize = 14
+    distLabel.TextXAlignment = Enum.TextXAlignment.Left
+    distLabel.Parent = frame
+
+    local distBox = Instance.new("TextBox")
+    distBox.Size = UDim2.new(0, 120, 0, 24)
+    distBox.Position = UDim2.new(0, 198, 0, 116)
+    distBox.Text = tostring(settings.distance)
+    distBox.Font = Enum.Font.SourceSans
+    distBox.TextSize = 14
+    distBox.ClearTextOnFocus = false
+    distBox.TextColor3 = Color3.new(1,1,1)
+    distBox.BackgroundColor3 = Color3.fromRGB(60,60,60)
+    distBox.Parent = frame
+
+    -- 状态
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(1, -12, 0, 18)
+    statusLabel.Position = UDim2.new(0, 6, 1, -24)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.Text = "状态: 空闲"
+    statusLabel.Font = Enum.Font.SourceSans
+    statusLabel.TextSize = 14
+    statusLabel.TextColor3 = Color3.new(1,1,1)
+    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    statusLabel.Parent = frame
+
+    return {
+        ScreenGui = screenGui,
+        Frame = frame,
+        PrevBtn = prevBtn,
+        NextBtn = nextBtn,
+        TargetLabel = targetLabel,
+        LockBtn = lockBtn,
+        HideBtn = hideBtn,
+        WallToggle = wallToggle,
+        DistBox = distBox,
+        StatusLabel = statusLabel,
+    }
+end
+
+local ui = createUI()
+
+-- 获取除自己外的其他玩家列表
+local function getOtherPlayers()
+    local out = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            table.insert(out, p)
+        end
+    end
+    return out
+end
+
+local function refreshTargetLabel()
+    if settings.target and settings.target.Name then
+        ui.TargetLabel.Text = "目标： " .. settings.target.Name
+    else
+        ui.TargetLabel.Text = "目标： 无"
+    end
+end
+
+local function selectTargetByIndex(idx)
+    local list = getOtherPlayers()
+    if #list == 0 then
+        settings.target = nil
+        settings.targetIndex = 1
+    else
+        if idx < 1 then idx = #list end
+        if idx > #list then idx = 1 end
+        settings.targetIndex = idx
+        settings.target = list[idx]
+    end
+    refreshTargetLabel()
+end
+
+-- 初次选择
+selectTargetByIndex(1)
+
+-- Raycast params 工具（黑名单：忽略两名玩家角色自身）
+local function makeRaycastParamsIgnoreChars(charA, charB)
+    local rp = RaycastParams.new()
+    rp.FilterType = Enum.RaycastFilterType.Blacklist
+    local ignoreList = {}
+    if charA then table.insert(ignoreList, charA) end
+    if charB and charB ~= charA then table.insert(ignoreList, charB) end
+    rp.FilterDescendantsInstances = ignoreList
+    rp.IgnoreWater = true
+    return rp
+end
+
+-- 检查本地玩家与目标之间是否有阻挡（如果有返回 false）
+local function isLineOfSightClearToTarget(targetRef)
+    if not targetRef then return false end
+    local localRef = getCharacterReference(LocalPlayer)
+    if not localRef then return false end
+    -- 从本地玩家位置指向目标位置
+    local from = localRef.Position
+    local to = targetRef.Position
+    local direction = to - from
+    if direction.Magnitude <= 0.001 then
+        return true
+    end
+    local rp = makeRaycastParamsIgnoreChars(LocalPlayer.Character, settings.target and settings.target.Character)
+    local ray = Workspace:Raycast(from, direction, rp)
+    -- 若 ray 不为 nil，说明中间有东西（不是这两个角色），即被墙阻挡
+    return ray == nil
+end
+
+-- UI 事件
+ui.PrevBtn.MouseButton1Click:Connect(function()
+    selectTargetByIndex(settings.targetIndex - 1)
+end)
+ui.NextBtn.MouseButton1Click:Connect(function()
+    selectTargetByIndex(settings.targetIndex + 1)
+end)
+
+ui.WallToggle.MouseButton1Click:Connect(function()
+    settings.wallDetection = not settings.wallDetection
+    ui.WallToggle.Text = "墙壁检测: " .. (settings.wallDetection and "开" or "关")
+end)
+
+ui.HideBtn.MouseButton1Click:Connect(function()
+    ui.ScreenGui.Enabled = false
+end)
+
+ui.DistBox.FocusLost:Connect(function(enterPressed)
+    local v = tonumber(ui.DistBox.Text)
+    if v and v > 0 then
+        settings.distance = v
+    else
+        ui.DistBox.Text = tostring(settings.distance)
+    end
+end)
+
+-- 锁定切换（在点击时，若开启墙壁检测且本地与目标被墙隔开则阻止锁定）
+local function tryToggleLock()
+    if not settings.target then
+        ui.StatusLabel.Text = "状态: 请选择目标玩家"
+        return
+    end
+    if not settings.locked then
+        -- 要开启锁定：先检查是否允许
+        local targetRef = getCharacterReference(settings.target)
+        if not targetRef then
+            ui.StatusLabel.Text = "状态: 目标未加载"
+            return
+        end
+        if settings.wallDetection then
+            local clear = isLineOfSightClearToTarget(targetRef)
+            if not clear then
+                ui.StatusLabel.Text = "状态: 锁定失败 — 与目标之间有墙"
+                return
+            end
+        end
+        -- 通过检查：开启锁定
+        settings.locked = true
+        ui.LockBtn.Text = "解锁"
+        ui.LockBtn.BackgroundColor3 = Color3.fromRGB(200,50,50)
+        Camera.CameraType = Enum.CameraType.Scriptable
+        ui.StatusLabel.Text = "状态: 已锁定"
+    else
+        -- 解除锁定
+        settings.locked = false
+        ui.LockBtn.Text = "锁定"
+        ui.LockBtn.BackgroundColor3 = Color3.fromRGB(50,120,210)
+        Camera.CameraType = Enum.CameraType.Custom
+        ui.StatusLabel.Text = "状态: 已解锁"
+    end
+end
+
+ui.LockBtn.MouseButton1Click:Connect(tryToggleLock)
+
+-- 快捷键
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        if input.KeyCode == Enum.KeyCode.P then
+            tryToggleLock()
+        elseif input.KeyCode == Enum.KeyCode.U then
+            ui.ScreenGui.Enabled = not ui.ScreenGui.Enabled
+        end
+    end
+end)
+
+-- 当目标玩家离开时，清理选择
+Players.PlayerRemoving:Connect(function(p)
+    if settings.target == p then
+        settings.target = nil
+        selectTargetByIndex(settings.targetIndex)
+    end
+end)
+
+-- 主循环：更新相机位置
+RunService.RenderStepped:Connect(function(dt)
+    -- 同步UI显示
+    ui.DistBox.Text = tostring(settings.distance)
+    refreshTargetLabel()
+
+    if settings.locked and settings.target then
+        local targetRef = getCharacterReference(settings.target)
+        local localRef = getCharacterReference(LocalPlayer)
+        if not targetRef or not localRef then
+            -- 目标或本地角色不存在 -> 解锁
+            settings.locked = false
+            Camera.CameraType = Enum.CameraType.Custom
+            ui.LockBtn.Text = "锁定"
+            ui.LockBtn.BackgroundColor3 = Color3.fromRGB(50,120,210)
+            ui.StatusLabel.Text = "状态: 目标或本地角色不存在，已解锁"
+            return
+        end
+
+        -- 距离检测（本地玩家与目标）
+        local distPlayers = (localRef.Position - targetRef.Position).Magnitude
+        if settings.maxDistance and distPlayers > settings.maxDistance then
+            settings.locked = false
+            Camera.CameraType = Enum.CameraType.Custom
+            ui.LockBtn.Text = "锁定"
+            ui.LockBtn.BackgroundColor3 = Color3.fromRGB(50,120,210)
+            ui.StatusLabel.Text = string.format("状态: 目标过远（%.1f > %.1f），已解锁", distPlayers, settings.maxDistance)
+            return
+        end
+
+        -- 再次执行墙壁检测（实时）：如果本地与目标之间被墙隔开，则自动解锁/阻止
+        if settings.wallDetection then
+            local clear = isLineOfSightClearToTarget(targetRef)
+            if not clear then
+                settings.locked = false
+                Camera.CameraType = Enum.CameraType.Custom
+                ui.LockBtn.Text = "锁定"
+                ui.LockBtn.BackgroundColor3 = Color3.fromRGB(50,120,210)
+                ui.StatusLabel.Text = "状态: 与目标被墙隔开，已解锁"
+                return
+            end
+        end
+
+        -- 计算目标点（稍微抬高）
+        local targetPos = targetRef.Position + Vector3.new(0, settings.height, 0)
+        -- 期望的相机位置（基于目标朝向的后方）
+        local lookVector = (settings.target.Character and settings.target.Character.PrimaryPart and settings.target.Character.PrimaryPart.CFrame.LookVector)
+        if not lookVector then
+            -- 如果没有PrimaryPart，使用从目标身体到本地的方向反向作为近似
+            lookVector = (targetPos - localRef.Position).Unit
+        end
+        local desiredPos = targetPos - lookVector * settings.distance
+
+        -- 相机碰撞检测：从 targetPos 指向 desiredPos 检测
+        local cameraPos = desiredPos
+        local direction = desiredPos - targetPos
+        if direction.Magnitude > 0.001 then
+            local rp = makeRaycastParamsIgnoreChars(LocalPlayer.Character, settings.target.Character)
+            local ray = Workspace:Raycast(targetPos, direction, rp)
+            if ray and ray.Instance then
+                local hitPos = ray.Position
+                local backOff = 0.4
+                local dirUnit = direction.Unit
+                cameraPos = hitPos - dirUnit * backOff
+                ui.StatusLabel.Text = "状态: 相机被墙阻挡，已调整位置"
+            else
+                ui.StatusLabel.Text = "状态: 跟随中"
+            end
+        end
+
+        -- 构造目标CFrame并插值
+        local targetCFrame = CFrame.new(cameraPos, targetPos)
+        local alpha = math.clamp(dt * settings.smoothing, 0, 1)
+        Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, alpha)
+    else
+        -- 未锁定：确保相机为系统控制
+        if Camera.CameraType ~= Enum.CameraType.Custom then
+            Camera.CameraType = Enum.CameraType.Custom
+        end
+        if not ui.ScreenGui.Enabled then
+            -- 若 UI 被隐藏，保持底栏状态（不覆盖）
+        end
+        ui.StatusLabel.Text = "状态: 空闲"
+    end
+end)
+
+-- 初始化提示
+if #getOtherPlayers() == 0 then
+    ui.StatusLabel.Text = "状态: 等待其他玩家加入"
+end
+
+-- 在玩家重生时确保相机模式恢复
+LocalPlayer.CharacterAdded:Connect(function()
+    if not settings.locked then
+        Camera.CameraType = Enum.CameraType.Custom
+    end
+end)
+
+print("[CameraLock] 脚本已就绪。快捷键：P 切换锁定，U 隐藏/显示 UI。")
