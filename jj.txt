@@ -1,0 +1,6 @@
+bypass:Button({
+    Title = "绕过移动经销商系统",
+    Callback = function()
+    game:GetService("Players").LocalPlayer:SetAttribute("mobileDealer",true)local ReplicatedStorage=game:GetService("ReplicatedStorage")local mobileDealer=require(ReplicatedStorage.devv.shared.Indicies.mobileDealer)for category,items in pairs(mobileDealer)do for _,item in ipairs(items)do item.stock=999999 end end local ReplicatedStorage=game:GetService("ReplicatedStorage")local mobileDealer=require(ReplicatedStorage.devv.shared.Indicies.mobileDealer)table.insert(mobileDealer.Gun,{itemName="Acid Gun",stock=999999})table.insert(mobileDealer.Gun,{itemName="Candy Bucket",stock=999999})
+    end
+})
