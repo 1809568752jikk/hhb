@@ -1,0 +1,497 @@
+-- AssistAim.local.lua
+-- LocalScript：放入 StarterPlayer -> StarterPlayerScripts
+-- 功能：
+--  - 辅助准心（屏幕上的准星）平滑锁定指定玩家头部/中心
+--  - UI：选择目标、锁定/解锁、隐藏/显示 UI、墙壁检测开关、最大距离可调、平滑系数可调、状态显示
+--  - 墙壁检测：如果本地玩家与目标之间有阻挡（墙/物体），则禁止锁定或自动取消锁定
+--  - 快捷键：P 切换锁定，U 隐藏/显示 UI，[/] 切换目标
+-- 注意：仅影响本地客户端的 UI / 准心，不会改变服务器或其他玩家视角
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+-- 设置
+local settings = {
+    locked = false,
+    wallCheck = true,        -- 是否检查本地玩家和目标之间的直线可见性
+    maxDistance = 200,       -- 最远锁定距离 (stud)
+    smoothing = 12,          -- 准心移动平滑系数（越大越快）
+    targetIndex = 1,
+    target = nil,
+    aimOffset = Vector3.new(0, 0.5, 0), -- 在目标部位上偏移（例如指向头顶上方）
+    crosshairColor = Color3.fromRGB(255, 80, 80),
+}
+
+-- 工具：返回可用于瞄准的部位（优先 Head，其次 HumanoidRootPart）
+local function getAimPart(player)
+    if not player or not player.Character then return nil end
+    local char = player.Character
+    local head = char:FindFirstChild("Head")
+    if head and head:IsA("BasePart") then return head end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if root and root:IsA("BasePart") then return root end
+    -- 回退：任何 BasePart
+    for _, v in pairs(char:GetChildren()) do
+        if v:IsA("BasePart") then return v end
+    end
+    return nil
+end
+
+-- 获取其他玩家列表（不包含自己）
+local function getOtherPlayers()
+    local out = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            table.insert(out, p)
+        end
+    end
+    return out
+end
+
+local function selectTargetByIndex(idx)
+    local list = getOtherPlayers()
+    if #list == 0 then
+        settings.target = nil
+        settings.targetIndex = 1
+    else
+        if idx < 1 then idx = #list end
+        if idx > #list then idx = 1 end
+        settings.targetIndex = idx
+        settings.target = list[idx]
+    end
+end
+
+-- 初始选择
+selectTargetByIndex(1)
+
+-- Raycast 参数（黑名单）
+local function makeRaycastParams(ignoreInstances)
+    local rp = RaycastParams.new()
+    rp.FilterType = Enum.RaycastFilterType.Blacklist
+    rp.FilterDescendantsInstances = ignoreInstances or {}
+    rp.IgnoreWater = true
+    return rp
+end
+
+-- 检查本地玩家与目标之间直线是否被阻挡（true = 无阻挡）
+local function isLineOfSightClear(targetPart)
+    if not targetPart then return false end
+    local myPart = getAimPart(LocalPlayer)
+    if not myPart then return false end
+    local from = myPart.Position
+    local to = targetPart.Position
+    local dir = to - from
+    if dir.Magnitude <= 0.001 then return true end
+    local ignoreList = {}
+    if LocalPlayer.Character then table.insert(ignoreList, LocalPlayer.Character) end
+    if settings.target and settings.target.Character then table.insert(ignoreList, settings.target.Character) end
+    local rp = makeRaycastParams(ignoreList)
+    local ray = Workspace:Raycast(from, dir, rp)
+    return ray == nil
+end
+
+-- 创建 UI 和准心
+local function createUI()
+    local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "AssistAimGui"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = playerGui
+
+    -- 主面板
+    local frame = Instance.new("Frame")
+    frame.Name = "Main"
+    frame.Size = UDim2.new(0, 340, 0, 160)
+    frame.Position = UDim2.new(0, 16, 0, 64)
+    frame.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
+    frame.BorderSizePixel = 0
+    frame.Parent = screenGui
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+    local title = Instance.new("TextLabel", frame)
+    title.Size = UDim2.new(1, -12, 0, 28)
+    title.Position = UDim2.new(0, 6, 0, 6)
+    title.BackgroundTransparency = 1
+    title.Text = "辅助准心锁定"
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 18
+    title.TextColor3 = Color3.fromRGB(230,230,230)
+    title.TextXAlignment = Enum.TextXAlignment.Left
+
+    -- 目标切换按钮和显示
+    local prevBtn = Instance.new("TextButton", frame)
+    prevBtn.Size = UDim2.new(0, 28, 0, 28)
+    prevBtn.Position = UDim2.new(0, 6, 0, 38)
+    prevBtn.Text = "<"
+    prevBtn.Font = Enum.Font.SourceSansBold
+    prevBtn.TextSize = 20
+
+    local nextBtn = Instance.new("TextButton", frame)
+    nextBtn.Size = UDim2.new(0, 28, 0, 28)
+    nextBtn.Position = UDim2.new(1, -34, 0, 38)
+    nextBtn.Text = ">"
+    nextBtn.Font = Enum.Font.SourceSansBold
+    nextBtn.TextSize = 20
+
+    local targetLabel = Instance.new("TextLabel", frame)
+    targetLabel.Size = UDim2.new(1, -72, 0, 28)
+    targetLabel.Position = UDim2.new(0, 40, 0, 38)
+    targetLabel.BackgroundTransparency = 1
+    targetLabel.Text = "目标： 无"
+    targetLabel.Font = Enum.Font.SourceSans
+    targetLabel.TextSize = 16
+    targetLabel.TextColor3 = Color3.fromRGB(240,240,240)
+    targetLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+    -- 锁定按钮
+    local lockBtn = Instance.new("TextButton", frame)
+    lockBtn.Size = UDim2.new(1, -12, 0, 36)
+    lockBtn.Position = UDim2.new(0, 6, 0, 72)
+    lockBtn.Text = "锁定"
+    lockBtn.Font = Enum.Font.SourceSansBold
+    lockBtn.TextSize = 18
+    lockBtn.BackgroundColor3 = Color3.fromRGB(50,120,210)
+    lockBtn.TextColor3 = Color3.fromRGB(255,255,255)
+
+    -- 隐藏UI按钮
+    local hideBtn = Instance.new("TextButton", frame)
+    hideBtn.Size = UDim2.new(0, 70, 0, 22)
+    hideBtn.Position = UDim2.new(1, -78, 0, 8)
+    hideBtn.Text = "隐藏 (U)"
+    hideBtn.Font = Enum.Font.SourceSans
+    hideBtn.TextSize = 12
+    hideBtn.BackgroundColor3 = Color3.fromRGB(80,80,80)
+    hideBtn.TextColor3 = Color3.fromRGB(255,255,255)
+
+    -- 墙壁检测开关
+    local wallToggle = Instance.new("TextButton", frame)
+    wallToggle.Size = UDim2.new(0, 160, 0, 24)
+    wallToggle.Position = UDim2.new(0, 6, 0, 116)
+    wallToggle.Text = "墙壁检测: 开"
+    wallToggle.Font = Enum.Font.SourceSans
+    wallToggle.TextSize = 14
+    wallToggle.BackgroundColor3 = Color3.fromRGB(70,70,70)
+    wallToggle.TextColor3 = Color3.fromRGB(255,255,255)
+
+    -- 距离输入
+    local distLabel = Instance.new("TextLabel", frame)
+    distLabel.Size = UDim2.new(0, 60, 0, 24)
+    distLabel.Position = UDim2.new(0, 176, 0, 116)
+    distLabel.BackgroundTransparency = 1
+    distLabel.Text = "最大距离:"
+    distLabel.Font = Enum.Font.SourceSans
+    distLabel.TextSize = 14
+    distLabel.TextColor3 = Color3.fromRGB(230,230,230)
+    distLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+    local distBox = Instance.new("TextBox", frame)
+    distBox.Size = UDim2.new(0, 140, 0, 24)
+    distBox.Position = UDim2.new(0, 236, 0, 116)
+    distBox.Text = tostring(settings.maxDistance)
+    distBox.Font = Enum.Font.SourceSans
+    distBox.TextSize = 14
+    distBox.ClearTextOnFocus = false
+    distBox.BackgroundColor3 = Color3.fromRGB(60,60,60)
+    distBox.TextColor3 = Color3.fromRGB(255,255,255)
+
+    -- 平滑输入
+    local smoothLabel = Instance.new("TextLabel", frame)
+    smoothLabel.Size = UDim2.new(0, 70, 0, 18)
+    smoothLabel.Position = UDim2.new(0, 6, 0, 140)
+    smoothLabel.BackgroundTransparency = 1
+    smoothLabel.Text = "平滑:"
+    smoothLabel.Font = Enum.Font.SourceSans
+    smoothLabel.TextSize = 14
+    smoothLabel.TextColor3 = Color3.fromRGB(230,230,230)
+    smoothLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+    local smoothBox = Instance.new("TextBox", frame)
+    smoothBox.Size = UDim2.new(0, 100, 0, 18)
+    smoothBox.Position = UDim2.new(0, 72, 0, 140)
+    smoothBox.Text = tostring(settings.smoothing)
+    smoothBox.Font = Enum.Font.SourceSans
+    smoothBox.TextSize = 14
+    smoothBox.ClearTextOnFocus = false
+    smoothBox.BackgroundColor3 = Color3.fromRGB(60,60,60)
+    smoothBox.TextColor3 = Color3.fromRGB(255,255,255)
+
+    -- 状态文本
+    local statusLabel = Instance.new("TextLabel", frame)
+    statusLabel.Size = UDim2.new(1, -12, 0, 18)
+    statusLabel.Position = UDim2.new(0, 6, 1, -24)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.Text = "状态: 空闲"
+    statusLabel.Font = Enum.Font.SourceSans
+    statusLabel.TextSize = 14
+    statusLabel.TextColor3 = Color3.fromRGB(200,200,200)
+    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+    -- 屏幕准心（使用 TextLabel 显示 +）
+    local crosshair = Instance.new("TextLabel")
+    crosshair.Name = "Crosshair"
+    crosshair.Size = UDim2.new(0, 28, 0, 28)
+    crosshair.AnchorPoint = Vector2.new(0.5, 0.5)
+    crosshair.Position = UDim2.new(0.5, 0.5)
+    crosshair.BackgroundTransparency = 1
+    crosshair.Text = "+"
+    crosshair.Font = Enum.Font.SourceSansBold
+    crosshair.TextSize = 28
+    crosshair.TextColor3 = settings.crosshairColor
+    crosshair.Parent = screenGui
+    crosshair.ZIndex = 10
+    crosshair.Visible = false -- 默认隐藏，只有在锁定时显示
+
+    return {
+        ScreenGui = screenGui,
+        Frame = frame,
+        PrevBtn = prevBtn,
+        NextBtn = nextBtn,
+        TargetLabel = targetLabel,
+        LockBtn = lockBtn,
+        HideBtn = hideBtn,
+        WallToggle = wallToggle,
+        DistBox = distBox,
+        SmoothBox = smoothBox,
+        StatusLabel = statusLabel,
+        Crosshair = crosshair,
+    }
+end
+
+local ui = createUI()
+
+-- UI 更新函数
+local function refreshTargetLabel()
+    if settings.target and settings.target.Name then
+        ui.TargetLabel.Text = "目标： " .. settings.target.Name
+    else
+        ui.TargetLabel.Text = "目标： 无"
+    end
+end
+
+-- UI 事件连接
+ui.PrevBtn.MouseButton1Click:Connect(function()
+    selectTargetByIndex(settings.targetIndex - 1)
+    refreshTargetLabel()
+end)
+ui.NextBtn.MouseButton1Click:Connect(function()
+    selectTargetByIndex(settings.targetIndex + 1)
+    refreshTargetLabel()
+end)
+
+ui.WallToggle.MouseButton1Click:Connect(function()
+    settings.wallCheck = not settings.wallCheck
+    ui.WallToggle.Text = "墙壁检测: " .. (settings.wallCheck and "开" or "关")
+end)
+
+ui.HideBtn.MouseButton1Click:Connect(function()
+    ui.ScreenGui.Enabled = false
+end)
+
+ui.DistBox.FocusLost:Connect(function(enterPressed)
+    local v = tonumber(ui.DistBox.Text)
+    if v and v > 0 then
+        settings.maxDistance = v
+    else
+        ui.DistBox.Text = tostring(settings.maxDistance)
+    end
+end)
+
+ui.SmoothBox.FocusLost:Connect(function(enterPressed)
+    local v = tonumber(ui.SmoothBox.Text)
+    if v and v > 0 then
+        settings.smoothing = v
+    else
+        ui.SmoothBox.Text = tostring(settings.smoothing)
+    end
+end)
+
+-- 切换锁定（尝试锁定前会验证距离与墙壁）
+local function tryToggleLock()
+    if not settings.target then
+        ui.StatusLabel.Text = "状态: 请选择目标"
+        return
+    end
+    if not settings.locked then
+        local aimPart = getAimPart(settings.target)
+        if not aimPart then
+            ui.StatusLabel.Text = "状态: 目标未加载"
+            return
+        end
+        -- 距离检查
+        local myPart = getAimPart(LocalPlayer)
+        if not myPart then
+            ui.StatusLabel.Text = "状态: 本地角色未加载"
+            return
+        end
+        local dist = (myPart.Position - aimPart.Position).Magnitude
+        if settings.maxDistance and dist > settings.maxDistance then
+            ui.StatusLabel.Text = string.format("状态: 目标过远（%.1f > %.1f）", dist, settings.maxDistance)
+            return
+        end
+        -- 墙壁检测（本地与目标之间是否被挡）
+        if settings.wallCheck then
+            local clear = isLineOfSightClear(aimPart)
+            if not clear then
+                ui.StatusLabel.Text = "状态: 无法锁定 — 与目标之间有阻挡"
+                return
+            end
+        end
+        -- 允许锁定
+        settings.locked = true
+        ui.LockBtn.Text = "解锁"
+        ui.LockBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        ui.Crosshair.Visible = true
+        ui.StatusLabel.Text = "状态: 已锁定"
+    else
+        -- 解锁
+        settings.locked = false
+        ui.LockBtn.Text = "锁定"
+        ui.LockBtn.BackgroundColor3 = Color3.fromRGB(50,120,210)
+        ui.Crosshair.Visible = false
+        ui.StatusLabel.Text = "状态: 已解锁"
+    end
+end
+
+ui.LockBtn.MouseButton1Click:Connect(tryToggleLock)
+
+-- 快捷键：P 切换锁定，U 切换 UI 显示，[ / ] 切换目标
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        local key = input.KeyCode
+        if key == Enum.KeyCode.P then
+            tryToggleLock()
+        elseif key == Enum.KeyCode.U then
+            ui.ScreenGui.Enabled = not ui.ScreenGui.Enabled
+        elseif key == Enum.KeyCode.LeftBracket or key == Enum.KeyCode.Comma then
+            selectTargetByIndex(settings.targetIndex - 1)
+            refreshTargetLabel()
+        elseif key == Enum.KeyCode.RightBracket or key == Enum.KeyCode.Period then
+            selectTargetByIndex(settings.targetIndex + 1)
+            refreshTargetLabel()
+        end
+    end
+end)
+
+-- 玩家离开时处理
+Players.PlayerRemoving:Connect(function(p)
+    if settings.target == p then
+        settings.target = nil
+        selectTargetByIndex(settings.targetIndex)
+        refreshTargetLabel()
+        if settings.locked then
+            -- 自动解锁
+            settings.locked = false
+            ui.LockBtn.Text = "锁定"
+            ui.LockBtn.BackgroundColor3 = Color3.fromRGB(50,120,210)
+            ui.Crosshair.Visible = false
+            ui.StatusLabel.Text = "状态: 目标离开，已解锁"
+        end
+    end
+end)
+
+-- 主循环：更新准心位置与自动检测（每帧）
+local crossPos = Vector2.new(0, 0) -- 当前像素坐标
+RunService.RenderStepped:Connect(function(dt)
+    -- 同步 UI 显示数据
+    ui.DistBox.Text = tostring(settings.maxDistance)
+    ui.SmoothBox.Text = tostring(settings.smoothing)
+    refreshTargetLabel()
+
+    if settings.locked and settings.target then
+        local aimPart = getAimPart(settings.target)
+        local myPart = getAimPart(LocalPlayer)
+        if not aimPart or not myPart then
+            -- 角色未加载 -> 解锁
+            settings.locked = false
+            ui.LockBtn.Text = "锁定"
+            ui.LockBtn.BackgroundColor3 = Color3.fromRGB(50,120,210)
+            ui.Crosshair.Visible = false
+            ui.StatusLabel.Text = "状态: 角色未加载，已解锁"
+            return
+        end
+
+        -- 距离检测
+        local dist = (myPart.Position - aimPart.Position).Magnitude
+        if settings.maxDistance and dist > settings.maxDistance then
+            settings.locked = false
+            ui.LockBtn.Text = "锁定"
+            ui.LockBtn.BackgroundColor3 = Color3.fromRGB(50,120,210)
+            ui.Crosshair.Visible = false
+            ui.StatusLabel.Text = string.format("状态: 目标过远（%.1f > %.1f），已解锁", dist, settings.maxDistance)
+            return
+        end
+
+        -- 墙壁检测（本地玩家与目标之间）
+        if settings.wallCheck then
+            local clear = isLineOfSightClear(aimPart)
+            if not clear then
+                settings.locked = false
+                ui.LockBtn.Text = "锁定"
+                ui.LockBtn.BackgroundColor3 = Color3.fromRGB(50,120,210)
+                ui.Crosshair.Visible = false
+                ui.StatusLabel.Text = "状态: 与目标被墙隔开，已解锁"
+                return
+            end
+        end
+
+        -- 计算世界瞄准点（部位位置 + 偏移）
+        local worldPoint = aimPart.Position + settings.aimOffset
+
+        -- 将世界坐标转换为屏幕坐标
+        local viewportPoint = Camera:WorldToViewportPoint(worldPoint)
+        local vx, vy, vz = viewportPoint.X, viewportPoint.Y, viewportPoint.Z
+        local onScreen = vz > 0 -- 在相机前面且可见
+
+        if not onScreen then
+            ui.StatusLabel.Text = "状态: 目标不在视野内"
+            -- 仍然保持锁定但隐藏准心或可选择解锁；这里我们选择继续显示（不可见）并提示
+        else
+            ui.StatusLabel.Text = "状态: 锁定并跟随"
+        end
+
+        -- 目标像素坐标
+        local targetPixel = Vector2.new(vx, vy)
+
+        -- 初始化 crossPos 为当前位置（如果尚未设定）
+        if crossPos.X == 0 and crossPos.Y == 0 then
+            crossPos = targetPixel
+        end
+
+        -- 平滑移动到目标像素
+        local alpha = math.clamp(dt * settings.smoothing, 0, 1)
+        crossPos = crossPos:Lerp(targetPixel, alpha)
+
+        -- 将像素坐标设置到 GUI（使用绝对像素位置）
+        ui.Crosshair.Position = UDim2.new(0, crossPos.X, 0, crossPos.Y)
+
+        -- 可选：当目标不在屏幕前方时隐藏准心
+        ui.Crosshair.Visible = onScreen
+
+    else
+        -- 非锁定状态，确保准心隐藏
+        if ui.Crosshair.Visible then
+            ui.Crosshair.Visible = false
+        end
+        ui.StatusLabel.Text = "状态: 空闲"
+    end
+end)
+
+-- 初始提示
+if #getOtherPlayers() == 0 then
+    ui.StatusLabel.Text = "状态: 等待其他玩家加入"
+end
+
+-- 在本地玩家重生时确保状态合理
+LocalPlayer.CharacterAdded:Connect(function()
+    if not settings.locked then
+        ui.Crosshair.Visible = false
+    end
+end)
+
+print("[AssistAim] 脚本已就绪。快捷键：P 切换锁定，U 隐藏/显示 UI，[/] 切换目标。")
