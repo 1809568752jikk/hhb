@@ -1,0 +1,123 @@
+-- ================================================================= --
+-- ================ Ohio Mobile Dealer Bypass & Buyer ================ --
+--         脚本作者: 根据原脚本改进，由AI模型提供 (2026/01/03)        --
+-- ================================================================= --
+
+-- 检查脚本是否在支持的环境中运行 (例如 Synapse, Script-Ware)
+if not getgenv then
+    print("此脚本需要在支持 getgenv 的执行器中运行。")
+    return
+end
+
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/xHeptc/Kavo-UI-Library/main/source.lua"))()
+local Window = Library.CreateLib("Ohio 移动经销商", "Midnight")
+
+-- ======================= 核心配置和函数 ======================= --
+
+-- 服务获取
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+-- 关键路径 (如果游戏更新，这些路径可能需要修改)
+local mobileDealerModulePath = ReplicatedStorage.devv.shared.Indicies.mobileDealer
+local purchaseRemotePath = ReplicatedStorage.devv.remotes.mobileDealer.buy
+
+-- 安全地加载模块和获取RemoteEvent
+local mobileDealerModule = require(mobileDealerModulePath)
+if not mobileDealerModule then
+    warn("错误：无法找到 mobileDealer 模块，脚本可能已过时。")
+    return
+end
+
+if not purchaseRemotePath then
+    warn("错误：无法找到购买用的 RemoteEvent，脚本可能已过时。")
+    return
+end
+
+-- 创建一个函数来购买物品，防止代码重复
+-- 参数: category (例如 "Gun"), itemName (例如 "AK-47")
+local function buyItem(category, itemName)
+    if not category or not itemName then
+        print("购买失败：类别或物品名称为空。")
+        return
+    end
+    
+    print(string.format("正在尝试购买 [%s]: %s", category, itemName))
+    
+    -- 向服务器发送购买请求
+    purchaseRemotePath:FireServer(category, itemName)
+    
+    -- 短暂等待，防止因请求过快而被服务器踢出
+    task.wait(0.2)
+end
+
+
+-- =========================== UI 和功能实现 =========================== --
+
+local MainTab = Window:NewTab("主功能")
+local DealerSection = MainTab:NewSection("移动经销商")
+
+DealerSection:NewButton("开启经销商 & 加载物品", "解锁移动经销商功能并加载所有物品的购买按钮", function()
+    -- 1. 解锁移动经销商功能
+    LocalPlayer:SetAttribute("mobileDealer", true)
+    print("已设置 mobileDealer 属性为 true。")
+
+    -- 2. (可选) 手动添加特殊物品到本地列表
+    -- 这能让你购买到商店UI里正常不显示的物品
+    table.insert(mobileDealerModule.Gun, {itemName = "Acid Gun", stock = 999999})
+    table.insert(mobileDealerModule.Gun, {itemName = "Candy Bucket", stock = 999999})
+    print("已在本地列表添加 Acid Gun 和 Candy Bucket。")
+
+    -- 3. 为所有物品创建购买按钮
+    local ItemPurchaseTab = Window:NewTab("物品购买")
+    
+    for category, items in pairs(mobileDealerModule) do
+        local ItemSection = ItemPurchaseTab:NewSection(category) -- 按类别创建分区
+        
+        for _, itemData in ipairs(items) do
+            -- 为每个物品创建一个按钮
+            ItemSection:NewButton(itemData.itemName, "点击直接购买", function()
+                buyItem(category, itemData.itemName)
+            end)
+        end
+    end
+    
+    print("所有物品的购买按钮已生成在 '物品购买' 标签页中！")
+    Library.SelectTab(ItemPurchaseTab) -- 自动切换到新生成的标签页
+end)
+
+DealerSection:NewButton("购买所有物品 (高风险)", "循环购买列表中的所有物品，可能导致被踢或封号！", function()
+    if not LocalPlayer:GetAttribute("mobileDealer") then
+        print("请先点击 '开启经销商 & 加载物品'。")
+        return
+    end
+
+    local confirm = game.CoreGui.RobloxGui:FindFirstChild("ConfirmPurchaseAll")
+    if confirm then confirm:Destroy() end
+
+    -- 创建一个确认提示，防止误触
+    local confirmationScreen = Instance.new("ScreenGui")
+    confirmationScreen.Name = "ConfirmPurchaseAll"
+    confirmationScreen.Parent = game.CoreGui.RobloxGui
+    -- ... (此处可以添加更复杂的确认UI) ...
+    
+    print("警告：你即将购买所有物品！这是一个高风险操作。")
+    local count = 0
+    for category, items in pairs(mobileDealerModule) do
+        for _, itemData in ipairs(items) do
+            count = count + 1
+        end
+    end
+    print(string.format("将在5秒后开始购买 %d 个物品...", count))
+    
+    task.wait(5)
+    
+    print("开始执行批量购买...")
+    for category, items in pairs(mobileDealerModule) do
+        for _, itemData in ipairs(items) do
+            buyItem(category, itemData.itemName)
+        end
+    end
+    print("所有物品购买尝试完毕！请检查你的库存。")
+end)
