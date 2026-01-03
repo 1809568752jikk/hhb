@@ -1,0 +1,106 @@
+--[[
+    由 XSimple 开发的移动经销商绕过工具
+    界面包含：开关 UI 的功能，以及你提供的核心功能逻辑
+]]
+
+local ScreenGui = Instance.new("ScreenGui")
+local MainFrame = Instance.new("Frame")
+local Title = Instance.new("TextLabel")
+local FunctionButton = Instance.new("TextButton")
+local UIListLayout = Instance.new("UIListLayout")
+local ToggleButton = Instance.new("TextButton") -- 屏幕上的常驻切换按钮
+
+-- 初始化界面
+ScreenGui.Name = "XSimple_MobileBypass"
+ScreenGui.Parent = game.CoreGui
+ScreenGui.ResetOnSpawn = false
+
+-- 切换主界面显示的按钮 (常驻左下角)
+ToggleButton.Name = "ToggleButton"
+ToggleButton.Parent = ScreenGui
+ToggleButton.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+ToggleButton.Position = UDim2.new(0, 10, 0.9, 0)
+ToggleButton.Size = UDim2.new(0, 80, 0, 30)
+ToggleButton.Font = Enum.Font.SourceSansBold
+ToggleButton.Text = "隐藏/显示 UI"
+ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleButton.TextSize = 14
+ToggleButton.ClipsDescendants = true
+
+-- 主框架
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = ScreenGui
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.BorderSizePixel = 0
+MainFrame.Position = UDim2.new(0.5, -100, 0.5, -75)
+MainFrame.Size = UDim2.new(0, 200, 0, 150)
+MainFrame.Active = true
+MainFrame.Draggable = true -- 允许拖动
+
+-- 标题
+Title.Name = "Title"
+Title.Parent = MainFrame
+Title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+Title.Size = UDim2.new(1, 0, 0, 30)
+Title.Font = Enum.Font.SourceSansBold
+Title.Text = "XSimple - 绕过系统"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 18
+
+-- 按钮列表布局
+UIListLayout.Parent = MainFrame
+UIListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.Padding = UDim.new(0, 10)
+
+-- 占位
+local Padding = Instance.new("Frame")
+Padding.Size = UDim2.new(1, 0, 0, 35)
+Padding.BackgroundTransparency = 1
+Padding.Parent = MainFrame
+
+-- [核心功能按钮]
+FunctionButton.Name = "FunctionButton"
+FunctionButton.Parent = MainFrame
+FunctionButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+FunctionButton.Size = UDim2.new(0, 160, 0, 40)
+FunctionButton.Font = Enum.Font.SourceSans
+FunctionButton.Text = "绕过移动经销商系统"
+FunctionButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+FunctionButton.TextSize = 16
+
+-- 界面开关逻辑
+ToggleButton.MouseButton1Click:Connect(function()
+    MainFrame.Visible = not MainFrame.Visible
+end)
+
+-- [功能实现 - 保持逻辑不变]
+FunctionButton.MouseButton1Click:Connect(function()
+    print("XSimple: 正在执行绕过逻辑...")
+    
+    -- 你的原始逻辑开始
+    game:GetService("Players").LocalPlayer:SetAttribute("mobileDealer",true)
+    
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local mobileDealer = require(ReplicatedStorage.devv.shared.Indicies.mobileDealer)
+    
+    -- 修改现有物品库存
+    for category, items in pairs(mobileDealer) do 
+        for _, item in ipairs(items) do 
+            item.stock = 999999 
+        end 
+    end 
+    
+    -- 插入特定物品
+    table.insert(mobileDealer.Gun, {itemName = "Acid Gun", stock = 999999})
+    table.insert(mobileDealer.Gun, {itemName = "Candy Bucket", stock = 999999})
+    -- 你的原始逻辑结束
+    
+    FunctionButton.Text = "执行成功！"
+    FunctionButton.BackgroundColor3 = Color3.fromRGB(40, 150, 40)
+    wait(2)
+    FunctionButton.Text = "绕过移动经销商系统"
+    FunctionButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+end)
+
+print("XSimple AI 助手提示：UI 已加载。点击 '隐藏/显示' 切换界面。")
