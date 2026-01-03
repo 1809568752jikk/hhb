@@ -1,0 +1,262 @@
+-- 原始功能：绕过移动经销商系统
+-- 我把核心逻辑提取到一个函数 bypassMobileDealer() 中，
+-- 并保持原来 bypass:Button(...) 的回调语义不变（仍然会调用同样的逻辑）。
+-- 同时添加了一个简单的 ScreenGui，用于打开/关闭一个面板，面板内有一个按钮可以执行相同的绕过功能。
+
+-- 注意：此脚本应作为 LocalScript 在客户端运行（例如放在 StarterPlayerScripts / StarterGui 中）。
+-- 如果你已有一个 UI 框架并且已经存在 bypass 变量（例如某个 UI 库），原始的 bypass 变量仍会被保留并继续工作。
+
+-- ========== 核心功能（保持原功能不变） ==========
+local function bypassMobileDealer()
+    local Players = game:GetService("Players")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+    -- 与原始逻辑相同：设置属性并修改 mobileDealer 索引中的库存与插入额外物品
+    local success, err = pcall(function()
+        Players.LocalPlayer:SetAttribute("mobileDealer", true)
+
+        local mobileDealer = require(ReplicatedStorage.devv.shared.Indicies.mobileDealer)
+        for category, items in pairs(mobileDealer) do
+            for _, item in ipairs(items) do
+                item.stock = 999999
+            end
+        end
+
+        -- 再次取得并插入特定物品（与原脚本相同）
+        local mobileDealer2 = require(ReplicatedStorage.devv.shared.Indicies.mobileDealer)
+        table.insert(mobileDealer2.Gun, { itemName = "Acid Gun", stock = 999999 })
+        table.insert(mobileDealer2.Gun, { itemName = "Candy Bucket", stock = 999999 })
+    end)
+
+    if not success then
+        warn("bypassMobileDealer 错误: ", err)
+    end
+end
+
+-- 如果上下文中存在 bypass UI 库（原始脚本中的变量），保持原调用，回调仍然触发相同逻辑
+-- 用 pcall 包裹以防 bypass 变量不存在，避免脚本报错
+pcall(function()
+    if typeof(bypass) == "table" and typeof(bypass.Button) == "function" then
+        bypass:Button({
+            Title = "绕过移动经销商系统",
+            Callback = function()
+                bypassMobileDealer()
+            end
+        })
+    end
+end)
+
+-- ========== 新 UI（替换旧 UI）：可开启 / 关闭 / 拖动 的面板（并调用相同功能） ==========
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+if not player then
+    -- 如果尚未拥有 LocalPlayer（例如在非本地环境执行），直接返回
+    return
+end
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- 创建 ScreenGui（如果已存在同名则复用）
+local guiName = "MobileDealerBypassUI_v2"
+local screenGui = playerGui:FindFirstChild(guiName)
+if not screenGui then
+    screenGui = Instance.new("ScreenGui")
+    screenGui.Name = guiName
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = playerGui
+end
+
+-- 主面板（默认隐藏），使用更简洁现代的样式，支持拖动与动画
+local mainFrame = screenGui:FindFirstChild("BypassPanel")
+if not mainFrame then
+    mainFrame = Instance.new("Frame")
+    mainFrame.Name = "BypassPanel"
+    mainFrame.Size = UDim2.new(0, 320, 0, 140)
+    mainFrame.Position = UDim2.new(0, 24, 0, 100)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Visible = false
+    mainFrame.AnchorPoint = Vector2.new(0, 0)
+    mainFrame.Parent = screenGui
+    mainFrame.ZIndex = 2
+    mainFrame.Active = true  -- 使其可接收输入以实现拖动
+
+    -- 阴影（简单模拟）
+    local shadow = Instance.new("Frame")
+    shadow.Name = "Shadow"
+    shadow.Size = UDim2.new(1, 6, 1, 6)
+    shadow.Position = UDim2.new(0, -3, 0, -3)
+    shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    shadow.BackgroundTransparency = 0.75
+    shadow.BorderSizePixel = 0
+    shadow.ZIndex = 1
+    shadow.Parent = mainFrame
+
+    -- 标题栏（用于拖动）
+    local titleBar = Instance.new("Frame")
+    titleBar.Name = "TitleBar"
+    titleBar.Size = UDim2.new(1, 0, 0, 36)
+    titleBar.Position = UDim2.new(0, 0, 0, 0)
+    titleBar.BackgroundTransparency = 1
+    titleBar.Parent = mainFrame
+
+    local title = Instance.new("TextLabel")
+    title.Name = "Title"
+    title.Size = UDim2.new(1, -60, 1, 0)
+    title.Position = UDim2.new(0, 12, 0, 0)
+    title.BackgroundTransparency = 1
+    title.Text = "移动经销商绕过"
+    title.TextColor3 = Color3.fromRGB(235, 235, 235)
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 18
+    title.Parent = titleBar
+
+    -- 关闭按钮（右上角）
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Name = "Close"
+    closeBtn.Size = UDim2.new(0, 28, 0, 28)
+    closeBtn.Position = UDim2.new(1, -36, 0, 4)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+    closeBtn.Text = "X"
+    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeBtn.Font = Enum.Font.SourceSansBold
+    closeBtn.TextSize = 18
+    closeBtn.Parent = titleBar
+
+    closeBtn.MouseButton1Click:Connect(function()
+        -- 平滑隐藏
+        local tween = TweenService:Create(mainFrame, TweenInfo.new(0.18), {Position = UDim2.new(mainFrame.Position.X.Scale, mainFrame.Position.X.Offset, mainFrame.Position.Y.Scale, mainFrame.Position.Y.Offset + 10), BackgroundTransparency = 0.15})
+        tween:Play()
+        tween.Completed:Wait()
+        mainFrame.Visible = false
+    end)
+
+    -- 执行按钮（保留原功能）
+    local execBtn = Instance.new("TextButton")
+    execBtn.Name = "ExecuteBypass"
+    execBtn.Size = UDim2.new(1, -24, 0, 52)
+    execBtn.Position = UDim2.new(0, 12, 0, 60)
+    execBtn.BackgroundColor3 = Color3.fromRGB(55, 120, 65)
+    execBtn.Text = "执行绕过"
+    execBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    execBtn.Font = Enum.Font.SourceSansSemibold
+    execBtn.TextSize = 20
+    execBtn.Parent = mainFrame
+
+    execBtn.MouseButton1Click:Connect(function()
+        -- 调用相同核心逻辑
+        bypassMobileDealer()
+    end)
+
+    -- 说明文本
+    local info = Instance.new("TextLabel")
+    info.Name = "Info"
+    info.Size = UDim2.new(1, -24, 0, 18)
+    info.Position = UDim2.new(0, 12, 0, 44)
+    info.BackgroundTransparency = 1
+    info.Text = "点击下方按钮将修改移动经销商的库存并添加物品（本地）"
+    info.TextColor3 = Color3.fromRGB(200, 200, 200)
+    info.Font = Enum.Font.SourceSans
+    info.TextSize = 14
+    info.TextXAlignment = Enum.TextXAlignment.Left
+    info.Parent = mainFrame
+
+    -- 简单拖动实现（标题栏拖动）
+    do
+        local dragging = false
+        local dragStart = nil
+        local startPos = nil
+
+        titleBar.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = true
+                dragStart = input.Position
+                startPos = mainFrame.Position
+
+                input.Changed:Connect(function()
+                    if input.UserInputState == Enum.UserInputState.End then
+                        dragging = false
+                    end
+                end)
+            end
+        end)
+
+        titleBar.InputChanged:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+                if dragging and dragStart and startPos then
+                    local delta = input.Position - dragStart
+                    local newX = startPos.X.Offset + delta.X
+                    local newY = startPos.Y.Offset + delta.Y
+                    mainFrame.Position = UDim2.new(0, newX, 0, newY)
+                end
+            end
+        end)
+    end
+end
+
+-- 小的开关按钮（用于打开/关闭 mainFrame，带平滑动画）
+local toggleBtn = screenGui:FindFirstChild("BypassToggle")
+if not toggleBtn then
+    toggleBtn = Instance.new("ImageButton")
+    toggleBtn.Name = "BypassToggle"
+    toggleBtn.Size = UDim2.new(0, 44, 0, 44)
+    toggleBtn.Position = UDim2.new(0, 16, 0, 28)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(45, 120, 200)
+    toggleBtn.Image = "" -- 可设置图标的URL或留空
+    toggleBtn.AutoButtonColor = true
+    toggleBtn.Parent = screenGui
+    toggleBtn.ZIndex = 3
+
+    local shortLabel = Instance.new("TextLabel")
+    shortLabel.Name = "Label"
+    shortLabel.Size = UDim2.new(1, 0, 1, 0)
+    shortLabel.BackgroundTransparency = 1
+    shortLabel.Text = "BD"
+    shortLabel.TextColor3 = Color3.fromRGB(255,255,255)
+    shortLabel.Font = Enum.Font.SourceSansBold
+    shortLabel.TextSize = 20
+    shortLabel.Parent = toggleBtn
+
+    local isVisible = false
+    local tweenShowInfo = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+    toggleBtn.MouseButton1Click:Connect(function()
+        isVisible = not isVisible
+        if isVisible then
+            mainFrame.Visible = true
+            -- 简单淡入与上移动画
+            mainFrame.Position = UDim2.new(mainFrame.Position.X.Scale, mainFrame.Position.X.Offset, mainFrame.Position.Y.Scale, mainFrame.Position.Y.Offset + 10)
+            mainFrame.BackgroundTransparency = 0
+            local t = TweenService:Create(mainFrame, tweenShowInfo, {Position = UDim2.new(mainFrame.Position.X.Scale, mainFrame.Position.X.Offset, mainFrame.Position.Y.Scale, mainFrame.Position.Y.Offset - 10)})
+            t:Play()
+        else
+            -- 隐藏
+            local t = TweenService:Create(mainFrame, tweenShowInfo, {Position = UDim2.new(mainFrame.Position.X.Scale, mainFrame.Position.X.Offset, mainFrame.Position.Y.Scale, mainFrame.Position.Y.Offset + 10)})
+            t:Play()
+            t.Completed:Connect(function()
+                mainFrame.Visible = false
+            end)
+        end
+    end)
+
+    -- 可选：双击清除 UI（保留注释，避免误删除）
+    local lastClick = 0
+    toggleBtn.MouseButton1Down:Connect(function()
+        local now = tick()
+        if now - lastClick < 0.25 then
+            -- 双击：销毁 UI（如需要启用，解除下列注释）
+            -- mainFrame:Destroy()
+            -- toggleBtn:Destroy()
+            -- screenGui:Destroy()
+            -- warn("MobileDealerBypassUI 已销毁（双击）")
+        end
+        lastClick = now
+    end)
+end
+
+-- 结束
+-- 现在脚本保留了原有 bypassMobileDealer 的完整逻辑与 bypass:Button(...) 的兼容调用，
+-- 并新增了一个更现代的可拖动面板（v2），支持通过右下角的 Toggle 按钮打开/关闭且有平滑动画。
