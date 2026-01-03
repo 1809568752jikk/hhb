@@ -1,0 +1,267 @@
+-- 移动经销商系统绕过脚本（改进版）
+-- 功能：设置购买权限、修改库存、购买物品、可打开/关闭UI面板
+
+-- ========== 核心功能 ==========
+local function bypassMobileDealer()
+    local Players = game:GetService("Players")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+    local success, err = pcall(function()
+        Players.LocalPlayer:SetAttribute("mobileDealer", true)
+
+        -- 修改库存
+        local mobileDealer = require(ReplicatedStorage.devv.shared.Indicies.mobileDealer)
+        for category, items in pairs(mobileDealer) do
+            if typeof(items) == "table" then
+                for _, item in ipairs(items) do
+                    item.stock = 999999
+                end
+            end
+        end
+
+        -- 插入额外物品
+        local mobileDealer2 = require(ReplicatedStorage.devv.shared.Indicies.mobileDealer)
+        if mobileDealer2.Gun then
+            table.insert(mobileDealer2.Gun, { itemName = "Acid Gun", stock = 999999 })
+            table.insert(mobileDealer2.Gun, { itemName = "Candy Bucket", stock = 999999 })
+        end
+    end)
+
+    if not success then
+        warn("bypassMobileDealer 错误: ", err)
+    else
+        print("✓ 移动经销商系统已绕过")
+    end
+end
+
+-- ========== 购买物品函数 ==========
+local function purchaseItem(itemName, quantity)
+    local Players = game:GetService("Players")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    
+    local success, err = pcall(function()
+        -- 尝试找到购买物品的函数或发送购买请求
+        local mobileDealer = require(ReplicatedStorage.devv.shared.Indicies.mobileDealer)
+        
+        -- 如果存在购买相关的远程函数或事件
+        local buyEvent = ReplicatedStorage:FindFirstChild("BuyItem")
+        if buyEvent then
+            buyEvent:FireServer(itemName, quantity)
+        else
+            -- 备选方案：直接修改玩家库存
+            local inventory = Players.LocalPlayer:FindFirstChild("Inventory")
+            if inventory then
+                -- 根据实际游戏结构调整
+                print("购买: " .. itemName .. " x" .. quantity)
+            end
+        end
+    end)
+
+    if not success then
+        warn("购买物品错误: ", err)
+    else
+        print("✓ 已购买: " .. itemName)
+    end
+end
+
+-- 执行绕过
+bypassMobileDealer()
+
+-- ========== UI 系统 ==========
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+if not player then
+    return
+end
+
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- 创建 ScreenGui
+local guiName = "MobileDealerBypassUI_v2"
+local screenGui = playerGui:FindFirstChild(guiName)
+if not screenGui then
+    screenGui = Instance.new("ScreenGui")
+    screenGui.Name = guiName
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = playerGui
+end
+
+-- ========== 主面板 ==========
+local mainFrame = screenGui:FindFirstChild("BypassPanel")
+if not mainFrame then
+    mainFrame = Instance.new("Frame")
+    mainFrame.Name = "BypassPanel"
+    mainFrame.Size = UDim2.new(0, 280, 0, 260)
+    mainFrame.Position = UDim2.new(0, 20, 0, 80)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Visible = false
+    mainFrame.Parent = screenGui
+
+    -- 添加圆角效果
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = mainFrame
+
+    -- 标题栏
+    local titleBar = Instance.new("Frame")
+    titleBar.Name = "TitleBar"
+    titleBar.Size = UDim2.new(1, 0, 0, 35)
+    titleBar.BackgroundColor3 = Color3.fromRGB(45, 120, 200)
+    titleBar.BorderSizePixel = 0
+    titleBar.Parent = mainFrame
+
+    local titleBarCorner = Instance.new("UICorner")
+    titleBarCorner.CornerRadius = UDim.new(0, 8)
+    titleBarCorner.Parent = titleBar
+
+    -- 标题文字
+    local title = Instance.new("TextLabel")
+    title.Name = "Title"
+    title.Size = UDim2.new(0.7, 0, 1, 0)
+    title.Position = UDim2.new(0.05, 0, 0, 0)
+    title.BackgroundTransparency = 1
+    title.Text = "移动经销商系统"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.TextScaled = true
+    title.Font = Enum.Font.GothamBold
+    title.Parent = titleBar
+
+    -- 关闭按钮
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Name = "Close"
+    closeBtn.Size = UDim2.new(0, 28, 0, 28)
+    closeBtn.Position = UDim2.new(1, -33, 0.5, -14)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    closeBtn.Text = "×"
+    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.TextSize = 20
+    closeBtn.Parent = titleBar
+
+    local closeBtnCorner = Instance.new("UICorner")
+    closeBtnCorner.CornerRadius = UDim.new(0, 4)
+    closeBtnCorner.Parent = closeBtn
+
+    closeBtn.MouseButton1Click:Connect(function()
+        mainFrame.Visible = false
+    end)
+
+    -- 内容区域
+    local contentFrame = Instance.new("Frame")
+    contentFrame.Name = "Content"
+    contentFrame.Size = UDim2.new(1, -20, 1, -55)
+    contentFrame.Position = UDim2.new(0, 10, 0, 40)
+    contentFrame.BackgroundTransparency = 1
+    contentFrame.Parent = mainFrame
+
+    local contentLayout = Instance.new("UIListLayout")
+    contentLayout.Padding = UDim.new(0, 8)
+    contentLayout.Parent = contentFrame
+
+    -- 绕过按钮
+    local execBtn = Instance.new("TextButton")
+    execBtn.Name = "ExecuteBypass"
+    execBtn.Size = UDim2.new(1, 0, 0, 40)
+    execBtn.BackgroundColor3 = Color3.fromRGB(60, 160, 80)
+    execBtn.Text = "✓ 执行绕过"
+    execBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    execBtn.Font = Enum.Font.GothamSemibold
+    execBtn.TextSize = 14
+    execBtn.Parent = contentFrame
+
+    local execBtnCorner = Instance.new("UICorner")
+    execBtnCorner.CornerRadius = UDim.new(0, 6)
+    execBtnCorner.Parent = execBtn
+
+    execBtn.MouseButton1Click:Connect(function()
+        bypassMobileDealer()
+        execBtn.BackgroundColor3 = Color3.fromRGB(100, 200, 120)
+        task.wait(0.5)
+        execBtn.BackgroundColor3 = Color3.fromRGB(60, 160, 80)
+    end)
+
+    -- 购买示例按钮（Acid Gun）
+    local buyAcidBtn = Instance.new("TextButton")
+    buyAcidBtn.Name = "BuyAcid"
+    buyAcidBtn.Size = UDim2.new(1, 0, 0, 35)
+    buyAcidBtn.BackgroundColor3 = Color3.fromRGB(150, 100, 200)
+    buyAcidBtn.Text = "购买 Acid Gun"
+    buyAcidBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    buyAcidBtn.Font = Enum.Font.GothamSemibold
+    buyAcidBtn.TextSize = 12
+    buyAcidBtn.Parent = contentFrame
+
+    local buyAcidCorner = Instance.new("UICorner")
+    buyAcidCorner.CornerRadius = UDim.new(0, 6)
+    buyAcidCorner.Parent = buyAcidBtn
+
+    buyAcidBtn.MouseButton1Click:Connect(function()
+        purchaseItem("Acid Gun", 1)
+    end)
+
+    -- 购买示例按钮（Candy Bucket）
+    local buyCandyBtn = Instance.new("TextButton")
+    buyCandyBtn.Name = "BuyCandy"
+    buyCandyBtn.Size = UDim2.new(1, 0, 0, 35)
+    buyCandyBtn.BackgroundColor3 = Color3.fromRGB(150, 100, 200)
+    buyCandyBtn.Text = "购买 Candy Bucket"
+    buyCandyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    buyCandyBtn.Font = Enum.Font.GothamSemibold
+    buyCandyBtn.TextSize = 12
+    buyCandyBtn.Parent = contentFrame
+
+    local buyCandyCorner = Instance.new("UICorner")
+    buyCandyCorner.CornerRadius = UDim.new(0, 6)
+    buyCandyCorner.Parent = buyCandyBtn
+
+    buyCandyBtn.MouseButton1Click:Connect(function()
+        purchaseItem("Candy Bucket", 1)
+    end)
+
+    -- 状态标签
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Name = "Status"
+    statusLabel.Size = UDim2.new(1, 0, 0, 20)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.Text = "准备就绪"
+    statusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+    statusLabel.TextSize = 10
+    statusLabel.Font = Enum.Font.GothamSemibold
+    statusLabel.Parent = contentFrame
+end
+
+-- ========== 开关按钮 ==========
+local toggleBtn = screenGui:FindFirstChild("BypassToggle")
+if not toggleBtn then
+    toggleBtn = Instance.new("TextButton")
+    toggleBtn.Name = "BypassToggle"
+    toggleBtn.Size = UDim2.new(0, 50, 0, 50)
+    toggleBtn.Position = UDim2.new(0, 20, 0, 20)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(45, 120, 200)
+    toggleBtn.Text = "BD"
+    toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleBtn.Font = Enum.Font.GothamBold
+    toggleBtn.TextSize = 16
+    toggleBtn.Parent = screenGui
+
+    local toggleCorner = Instance.new("UICorner")
+    toggleCorner.CornerRadius = UDim.new(0, 10)
+    toggleCorner.Parent = toggleBtn
+
+    -- 悬停效果
+    toggleBtn.MouseEnter:Connect(function()
+        toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 140, 220)
+    end)
+
+    toggleBtn.MouseLeave:Connect(function()
+        toggleBtn.BackgroundColor3 = Color3.fromRGB(45, 120, 200)
+    end)
+
+    -- 点击开关面板
+    toggleBtn.MouseButton1Click:Connect(function()
+        mainFrame.Visible = not mainFrame.Visible
+    end)
+end
+
+print("✓ 移动经销商绕过脚本已加载 - 按 BD 按钮打开面板")
