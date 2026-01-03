@@ -1,0 +1,160 @@
+-- 原始功能：绕过移动经销商系统
+-- 我把核心逻辑提取到一个函数 bypassMobileDealer() 中，
+-- 并保持原来 bypass:Button(...) 的回调语义不变（仍然会调用同样的逻辑）。
+-- 同时添加了一个简单的 ScreenGui，用于打开/关闭一个面板，面板内有一个按钮可以执行相同的绕过功能。
+
+-- 注意：此脚本应作为 LocalScript 在客户端运行（例如放在 StarterPlayerScripts / StarterGui 中）。
+-- 如果你已有一个 UI 框架并且已经存在 bypass 变量（例如某个 UI 库），原始的 bypass:Button(...) 调用仍会被保留并继续工作。
+
+-- ========== 核心功能（保持原功能不变） ==========
+local function bypassMobileDealer()
+    local Players = game:GetService("Players")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+    -- 与原始逻辑相同：设置属性并修改 mobileDealer 索引中的库存与插入额外物品
+    local success, err = pcall(function()
+        Players.LocalPlayer:SetAttribute("mobileDealer", true)
+
+        local mobileDealer = require(ReplicatedStorage.devv.shared.Indicies.mobileDealer)
+        for category, items in pairs(mobileDealer) do
+            for _, item in ipairs(items) do
+                item.stock = 999999
+            end
+        end
+
+        -- 再次取得并插入特定物品（与原脚本相同）
+        local mobileDealer2 = require(ReplicatedStorage.devv.shared.Indicies.mobileDealer)
+        table.insert(mobileDealer2.Gun, { itemName = "Acid Gun", stock = 999999 })
+        table.insert(mobileDealer2.Gun, { itemName = "Candy Bucket", stock = 999999 })
+    end)
+
+    if not success then
+        warn("bypassMobileDealer 错误: ", err)
+    end
+end
+
+-- 如果上下文中存在 bypass UI 库（原始脚本中的变量），保持原调用，回调仍然触发相同逻辑
+-- 用 pcall 包裹以防 bypass 变量不存在，避免脚本报错
+pcall(function()
+    if typeof(bypass) == "table" and typeof(bypass.Button) == "function" then
+        bypass:Button({
+            Title = "绕过移动经销商系统",
+            Callback = function()
+                bypassMobileDealer()
+            end
+        })
+    end
+end)
+
+-- ========== 新增 UI：可打开 / 关闭 的面板（并调用相同功能） ==========
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+if not player then
+    -- 如果尚未拥有 LocalPlayer（例如在非本地环境执行），直接返回
+    return
+end
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- 创建 ScreenGui（如果已存在同名则复用）
+local guiName = "MobileDealerBypassUI_v1"
+local screenGui = playerGui:FindFirstChild(guiName)
+if not screenGui then
+    screenGui = Instance.new("ScreenGui")
+    screenGui.Name = guiName
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = playerGui
+end
+
+-- 主面板（默认隐藏）
+local mainFrame = screenGui:FindFirstChild("BypassPanel")
+if not mainFrame then
+    mainFrame = Instance.new("Frame")
+    mainFrame.Name = "BypassPanel"
+    mainFrame.Size = UDim2.new(0, 240, 0, 120)
+    mainFrame.Position = UDim2.new(0, 20, 0, 80)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Visible = false
+    mainFrame.Parent = screenGui
+
+    -- 标题
+    local title = Instance.new("TextLabel")
+    title.Name = "Title"
+    title.Size = UDim2.new(1, -40, 0, 30)
+    title.Position = UDim2.new(0, 10, 0, 6)
+    title.BackgroundTransparency = 1
+    title.Text = "移动经销商绕过"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.TextScaled = true
+    title.Font = Enum.Font.SourceSansSemibold
+    title.Parent = mainFrame
+
+    -- 关闭按钮（右上角）
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Name = "Close"
+    closeBtn.Size = UDim2.new(0, 24, 0, 24)
+    closeBtn.Position = UDim2.new(1, -30, 0, 6)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    closeBtn.Text = "X"
+    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeBtn.Font = Enum.Font.SourceSansBold
+    closeBtn.TextScaled = true
+    closeBtn.Parent = mainFrame
+
+    closeBtn.MouseButton1Click:Connect(function()
+        mainFrame.Visible = false
+    end)
+
+    -- 执行按钮（保留原功能）
+    local execBtn = Instance.new("TextButton")
+    execBtn.Name = "ExecuteBypass"
+    execBtn.Size = UDim2.new(1, -20, 0, 48)
+    execBtn.Position = UDim2.new(0, 10, 0, 44)
+    execBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    execBtn.Text = "绕过移动经销商系统"
+    execBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    execBtn.Font = Enum.Font.SourceSansSemibold
+    execBtn.TextScaled = true
+    execBtn.Parent = mainFrame
+
+    execBtn.MouseButton1Click:Connect(function()
+        -- 调用相同核心逻辑
+        bypassMobileDealer()
+    end)
+end
+
+-- 小的开关按钮（用于打开/关闭 mainFrame）
+local toggleBtn = screenGui:FindFirstChild("BypassToggle")
+if not toggleBtn then
+    toggleBtn = Instance.new("TextButton")
+    toggleBtn.Name = "BypassToggle"
+    toggleBtn.Size = UDim2.new(0, 36, 0, 36)
+    toggleBtn.Position = UDim2.new(0, 20, 0, 30)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(45, 120, 200)
+    toggleBtn.Text = "BD"
+    toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleBtn.Font = Enum.Font.SourceSansBold
+    toggleBtn.TextScaled = true
+    toggleBtn.Parent = screenGui
+
+    toggleBtn.MouseButton1Click:Connect(function()
+        mainFrame.Visible = not mainFrame.Visible
+    end)
+
+    -- 可选：右键清除 UI（防误触）——这里用双击模拟（简单示例）
+    local lastClick = 0
+    toggleBtn.MouseButton1Down:Connect(function()
+        local now = tick()
+        if now - lastClick < 0.3 then
+            -- 双击：隐藏并销毁 UI（如需保留可注释此段）
+            -- mainFrame:Destroy()
+            -- toggleBtn:Destroy()
+            -- screenGui:Destroy()
+            -- warn("MobileDealerBypassUI 已销毁（双击）")
+        end
+        lastClick = now
+    end)
+end
+
+-- 结束
+-- 现在脚本同时保留了原有 bypass:Button(...) 的调用（若存在），并新增了一个可打开/关闭的 UI 来执行相同操作。
